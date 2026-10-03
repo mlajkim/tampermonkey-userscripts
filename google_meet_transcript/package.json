@@ -1,0 +1,16 @@
+{
+  "name": "google-meet-transcript",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Keep a running Google Meet caption log and download automatic backups.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "node --check google-meet-transcript.user.js",
+    "test": "node --test test/*.test.mjs",
+    "test:browser": "node test/browser.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

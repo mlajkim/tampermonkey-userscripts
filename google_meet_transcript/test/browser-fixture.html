@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Meet caption fixture</title>
+<style>
+  body { font: 16px system-ui; padding: 30px; max-width: 720px; }
+  [role=region] { border: 1px solid #ccc; padding: 12px; margin: 16px 0; }
+  .caption { padding: 8px; }
+</style>
+<h1>Local caption fixture</h1>
+<div id="captions" role="region" aria-label="字幕"></div>
+<div role="region" aria-label="In-call messages">
+  <div><div><span>Chat user</span></div><div>Do not collect chat messages.</div></div>
+</div>
+<pre id="results" data-state="running">Running browser checks…</pre>
+<script>
+  if (sessionStorage.getItem("test:clear-room-tab") === "yes") {
+    sessionStorage.removeItem("google-meet-transcript:v1:abc-defg-hij");
+    sessionStorage.removeItem("test:clear-room-tab");
+  }
+  window.testState = { downloads: [], offset: Number(sessionStorage.getItem("test:offset") || 0), confirmations: 0 };
+  const nativeNow = Date.now;
+  Date.now = () => nativeNow() + window.testState.offset;
+  const blobs = new Map();
+  URL.createObjectURL = (blob) => {
+    const url = `blob:fixture-${blobs.size}`;
+    blobs.set(url, blob);
+    return url;
+  };
+  URL.revokeObjectURL = () => {};
+  HTMLAnchorElement.prototype.click = function () {
+    window.testState.downloads.push({ name: this.download, blob: blobs.get(this.href) });
+  };
+  window.confirm = () => { window.testState.confirmations += 1; return true; };
+  window.makeCaption = (speaker, text) => {
+    const row = document.createElement("div");
+    row.className = "caption";
+    const heading = document.createElement("div");
+    const name = document.createElement("span");
+    name.textContent = speaker;
+    heading.append(name);
+    const content = document.createElement("div");
+    content.textContent = text;
+    row.append(heading, content);
+    return row;
+  };
+  const restoredRows = JSON.parse(sessionStorage.getItem("test:visible") || "null");
+  for (const row of restoredRows || [{ speaker: "Alex", text: "First caption" }]) {
+    document.getElementById("captions").append(makeCaption(row.speaker, row.text));
+  }
+</script>
+<script src="/google-meet-transcript.user.js"></script>
+<script type="module" src="/test/browser-checks.js"></script>
+</html>

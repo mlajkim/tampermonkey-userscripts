@@ -1,0 +1,17 @@
+{
+  "name": "tampermonkey-userscripts",
+  "private": true,
+  "description": "A collection of Tampermonkey userscripts by mlajkim.",
+  "workspaces": [
+    "google_meet_transcript"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "check": "npm run check --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:browser": "npm run test:browser --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
