@@ -9,6 +9,7 @@ A collection of Tampermonkey userscripts by [mlajkim](https://github.com/mlajkim
 | Userscript | What it does |
 | --- | --- |
 | [Google Meet Transcript](google_meet_transcript/README.md) | Collects Meet captions automatically, backs up the full transcript every 30 minutes, and downloads remaining changes when the meeting ends |
+| [Google Meet Auto Video Off](google_meet_auto_video_off/README.md) | Saves bandwidth by turning off participants' camera feeds while keeping shared content visible |
 
 ## How to setup
 

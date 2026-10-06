@@ -1,0 +1,14 @@
+{
+  "name": "google-meet-auto-video-off",
+  "version": "0.2.1",
+  "private": true,
+  "type": "module",
+  "description": "Turn off incoming Google Meet camera feeds while preserving shared content.",
+  "scripts": {
+    "check": "node --check google-meet-auto-video-off.user.js",
+    "test:browser": "node test/browser.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
