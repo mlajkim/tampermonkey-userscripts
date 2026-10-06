@@ -11,7 +11,7 @@ Incoming camera video uses network bandwidth, and sometimes you want to keep tha
 3. Replace the editor contents with [google-meet-auto-video-off.user.js](google-meet-auto-video-off.user.js), then save
 4. Reload the Meet tab and join a call
 
-Version **0.2.1** recognizes Meet’s People button with a separate participant count and allows camera automation while the non-modal reaction tray is open. These structures were checked against a saved Meet page. Editing the file in this repository does not update the copy installed in Tampermonkey; replace that copy and reload Meet. Check that the panel shows **v0.2.1**.
+Version **0.2.1** recognizes Meet’s People button with a separate participant count and allows camera automation while the non-modal reaction tray is open. Editing the file in this repository does not update the copy installed in Tampermonkey; replace that copy and reload Meet. Check that the panel shows **v0.2.1**.
 
 The **Auto video off** panel appears at the bottom left. On joining, the script opens Meet’s **People / Show everyone** panel and turns off the incoming camera feed for each recognized participant. It also checks visible camera tiles, including tiles without a `<video>` element. English, Japanese, and Korean controls are supported.
 
@@ -55,4 +55,4 @@ npm run test:browser
 
 The browser checks use an installed Chrome or Chromium, a fresh temporary profile, and local simulated Meet pages. Set `CHROME_BIN` if the browser is not found automatically. The collection’s root commands also include this script.
 
-The People-button and reaction-tray fixtures reproduce structures from a saved Meet page, with personal data omitted. The test page also enforces Trusted Types to check panel startup. Camera-menu actions remain simulated; these checks do not establish live-call compatibility.
+The fixtures use synthetic participants, meeting IDs, and generic controls. They cover a People button with a count, the reaction tray, and a Trusted Types policy for panel startup. Camera-menu actions remain simulated; these checks do not establish live-call compatibility.

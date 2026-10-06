@@ -35,3 +35,5 @@ npm run test:browser
 The root commands run across the projects listed in `package.json` under `workspaces`. You can also run the same commands from an individual script's directory; see its README for any additional requirements.
 
 To add another userscript, give it a separate top-level directory and add it to the table above. Register scripts that use Node.js in the root `workspaces` list so the shared commands include them.
+
+Use synthetic data in tests. Local browser captures belong in ignored `temp/` or numbered `temp` directories.

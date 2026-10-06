@@ -27,15 +27,15 @@ try {
   check(testState.menus.length === 0 && status() === "Waiting for a call", "Pre-join screens do not trigger camera actions");
   join();
   await until(() => status() === "Camera feeds off: 1" && idle(), "camera control in the People list");
-  check(testState.peopleOpens === 1 && countOff("alice") === 1 && !participants.get("alice").watching,
+  check(testState.peopleOpens === 1 && countOff("participant-a") === 1 && !participants.get("participant-a").watching,
     "Joining automatically opens People and turns off a camera without participant-ID attributes or video elements");
-  check(document.querySelector('[jsname="ocqpFe"]').textContent === "People5",
-    "The saved Meet People button with a separate count is recognized without an aria-label");
+  check(document.getElementById("people-toggle").textContent === "People3",
+    "A People button with a separate count is recognized without an aria-label");
   check(document.getElementById("reaction-tray").isConnected,
-    "The saved Meet Send a reaction dialog can remain open while camera automation runs");
+    "A Send a reaction dialog can remain open while camera automation runs");
   check(document.getElementById("inactive-menu").isConnected,
     "A transparent inactive menu does not block camera automation");
-  check(testState.menus.filter((id) => id === "alice").length === 2,
+  check(testState.menus.filter((id) => id === "participant-a").length === 2,
     "Success requires reopening the native menu and verifying Start watching");
   check(!testState.menus.some((id) => ["self", "named-self", "share", "shared-video"].includes(id)),
     "Self-view, shared screens, and shared videos are excluded from camera actions");
@@ -49,21 +49,21 @@ try {
   await until(() => countOff("jp") === 1 && countOff("kr") === 1 && idle(), "localized late arrivals");
   check(true, "Japanese and Korean camera controls are applied to late arrivals");
 
-  makeParticipant("same-name-1", { name: "Alex" });
-  makeParticipant("same-name-2", { name: "Alex" });
+  makeParticipant("same-name-1", { name: "Test participant" });
+  makeParticipant("same-name-2", { name: "Test participant" });
   await until(() => countOff("same-name-1") === 1 && countOff("same-name-2") === 1 && idle(), "duplicate participant names");
   check(true, "Participants with identical names are both handled");
 
-  const alice = participants.get("alice");
-  alice.more.click();
+  const participantA = participants.get("participant-a");
+  participantA.more.click();
   await until(() => [...document.querySelectorAll('[role="menuitem"]')].some((item) => item.textContent.includes("Start watching")), "manual restore menu");
   [...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent.includes("Start watching")).click();
   await wait(1200);
-  check(countOff("alice") === 1 && alice.watching, "A manually restored camera is left on for the rest of that join");
-  alice.remove();
-  makeParticipant("alice", { language: "watch" });
+  check(countOff("participant-a") === 1 && participantA.watching, "A manually restored camera is left on for the rest of that join");
+  participantA.remove();
+  makeParticipant("participant-a", { language: "watch" });
   await wait(1000);
-  check(countOff("alice") === 1, "Replacing an ID-less People row preserves its unique-name override");
+  check(countOff("participant-a") === 1, "Replacing an ID-less People row preserves its unique-name override");
 
   makeParticipant("already-off", { off: true });
   await until(() => testState.menus.includes("already-off") && idle(), "already disabled feed");
@@ -107,7 +107,7 @@ try {
   check(countOff("leaving") === 0, "Leaving cancels an in-flight camera action");
   participants.get("leaving").remove();
   join();
-  await until(() => countOff("alice") === 2 && idle(), "same-room rejoin");
+  await until(() => countOff("participant-a") === 2 && idle(), "same-room rejoin");
   check(true, "Rejoining the same meeting reapplies the camera-off default");
 
   toggle();
@@ -149,7 +149,7 @@ try {
   clearInterval(virtualizationTimer);
   check(true, "A virtualized People list is scanned from top to bottom so off-screen cameras are turned off");
   check(list.scrollTop === 230, "The automatic scan restores the original People-list scroll position");
-  check(testState.unexpected.length === 0 && testState.on.join(",") === "alice",
+  check(testState.unexpected.length === 0 && testState.on.join(",") === "participant-a",
     "The script never changes Audio only, outgoing cameras, mute/remove controls, or shared-content feeds");
 
   const output = document.getElementById("results");

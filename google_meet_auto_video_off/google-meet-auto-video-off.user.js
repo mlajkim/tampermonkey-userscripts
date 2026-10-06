@@ -60,7 +60,7 @@
   function peopleControl() {
     return all(BUTTON).find((node) => visible(node) && usable(node) && !node.closest(ROW) &&
       (matches(node, PEOPLE) || hasIcon(node, "people") || hasIcon(node, "group") ||
-        // Current Meet uses a div button with separate People and count spans ("People5").
+        // Meet can use a div button with separate People and count spans.
         (node.getAttribute("aria-haspopup") === "dialog" && all('span', node).some((label) =>
           !label.childElementCount && PEOPLE.test(clean(label.textContent))))));
   }

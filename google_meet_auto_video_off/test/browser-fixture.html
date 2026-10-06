@@ -11,10 +11,10 @@
 </style>
 <h1>Local Meet camera-feed controls fixture</h1>
 <div id="call-controls" role="toolbar"></div>
-<!-- Structure from the supplied Meet snapshot, with unrelated page data omitted. -->
+<!-- Synthetic controls: no captured meeting data or page identifiers. -->
 <div role="region" aria-label="Call controls">
-  <div class="R5ccN"><div class="KcrUod MIh6kc" style="min-width:616px;height:7.5rem">
-    <div class="gPfPb" jsname="TUXR0d" role="dialog" aria-label="Send a reaction" id="reaction-tray">
+  <div><div style="min-height:80px">
+    <div role="dialog" aria-label="Send a reaction" id="reaction-tray">
       <button type="button" aria-label="Send thumbs up reaction">👍</button>
     </div>
   </div></div>
@@ -114,22 +114,19 @@
       document.getElementById("people").hidden = true;
       document.querySelectorAll('[role="menu"]').forEach((menu) => menu.remove());
     });
-    // The saved Meet button has no aria-label/aria-controls and its text is "People5".
+    // Exercise a People button with a count and no aria-label/aria-controls.
     const people = document.createElement("div");
     people.setAttribute("role", "button");
     people.setAttribute("tabindex", "0");
     people.setAttribute("aria-haspopup", "dialog");
     people.setAttribute("aria-expanded", "false");
-    people.setAttribute("jsname", "ocqpFe");
-    people.className = "JgybGf";
+    people.id = "people-toggle";
     const content = document.createElement("div");
     const label = document.createElement("span");
     label.textContent = "People";
     const counter = document.createElement("div");
-    counter.className = "nI4yAd";
     const number = document.createElement("div");
-    number.className = "fs3avc";
-    number.textContent = "5";
+    number.textContent = "3";
     counter.append(number);
     content.append(label, counter);
     people.append(content);
@@ -147,10 +144,10 @@
     document.getElementById("call-controls").replaceChildren(leave, people, settings, camera);
   };
   makeParticipant("self", { self: true });
-  makeParticipant("named-self", { name: "Pat (You)" });
+  makeParticipant("named-self", { name: "Test user (You)" });
   makeParticipant("share", { presentation: true });
   makeParticipant("shared-video", { label: "A shared screen presentation" });
-  makeParticipant("alice", { language: "watch", delay: 200 });
+  makeParticipant("participant-a", { language: "watch", delay: 200 });
 </script>
 <script src="/google-meet-auto-video-off.user.js"></script>
 <script type="module" src="/test/browser-checks.js"></script>
