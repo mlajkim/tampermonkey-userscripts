@@ -3,6 +3,7 @@ const wait = (ms = 50) => new Promise((resolve) => setTimeout(resolve, ms));
 const panel = () => document.getElementById("google-meet-auto-video-off-panel").shadowRoot;
 const status = () => panel().getElementById("status").textContent;
 const toggle = () => panel().getElementById("toggle").click();
+const applyAgain = () => panel().getElementById("retry").click();
 const countOff = (id) => testState.off.filter((value) => value === id).length;
 function check(condition, message) {
   if (!condition) throw new Error(message);
@@ -17,6 +18,7 @@ async function until(predicate, message, timeout = 6000) {
   throw new Error(`Timed out: ${message}; status: ${status()}`);
 }
 const idle = () => !document.querySelector('[role="menu"]:not(#inactive-menu)') && !panel().getElementById("retry").disabled;
+const done = () => status().startsWith("Done · ") && idle();
 
 try {
   let requiresTrustedHTML = false;
@@ -25,8 +27,16 @@ try {
   check(requiresTrustedHTML && !!panel(), "The userscript panel starts when the page enforces Trusted Types");
   await wait(1000);
   check(testState.menus.length === 0 && status() === "Waiting for a call", "Pre-join screens do not trigger camera actions");
+  makeParticipant("canvas", { tile: true, idAttribute: "data-requested-participant-id", iconOnly: true });
+  makeParticipant("jp", { language: "ja" });
+  makeParticipant("kr", { language: "ko" });
+  makeParticipant("same-name-1", { name: "Test participant" });
+  makeParticipant("same-name-2", { name: "Test participant" });
+  makeParticipant("already-off", { off: true });
+  makeParticipant("rejected", { rejectOff: true });
+  makeParticipant("menu-share", { menuPresentation: true });
   join();
-  await until(() => status() === "Camera feeds off: 1" && idle(), "camera control in the People list");
+  await until(done, "the initial camera-off pass", 15000);
   check(testState.peopleOpens === 1 && countOff("participant-a") === 1 && !participants.get("participant-a").watching,
     "Joining automatically opens People and turns off a camera without participant-ID attributes or video elements");
   check(document.getElementById("people-toggle").textContent === "People3",
@@ -41,18 +51,25 @@ try {
     "Self-view, shared screens, and shared videos are excluded from camera actions");
   check(document.querySelectorAll("video").length === 0, "Camera discovery works without any video elements");
 
-  makeParticipant("canvas", { tile: true, idAttribute: "data-requested-participant-id", iconOnly: true });
-  await until(() => countOff("canvas") === 1 && idle(), "canvas tile");
-  check(true, "Canvas tiles using data-requested-participant-id and icon-only menu buttons are supported");
-  makeParticipant("jp", { language: "ja" });
-  makeParticipant("kr", { language: "ko" });
-  await until(() => countOff("jp") === 1 && countOff("kr") === 1 && idle(), "localized late arrivals");
-  check(true, "Japanese and Korean camera controls are applied to late arrivals");
+  check(countOff("canvas") === 1, "Canvas tiles using data-requested-participant-id and icon-only menu buttons are supported");
+  check(countOff("jp") === 1 && countOff("kr") === 1, "Japanese and Korean camera controls are supported in the initial pass");
+  check(countOff("same-name-1") === 1 && countOff("same-name-2") === 1, "Participants with identical names are both handled");
+  check(testState.menus.includes("already-off") && countOff("already-off") === 0 && !testState.on.includes("already-off"),
+    "An already-disabled camera is never turned back on");
+  check(participants.get("rejected").watching && status().includes("Unconfirmed: 2"),
+    "A rejected native action and an unsupported presentation menu are reported as unconfirmed");
+  check(testState.menus.includes("menu-share") && countOff("menu-share") === 0,
+    "Presentation controls in a menu prevent a video-off click even without a tile marker");
 
-  makeParticipant("same-name-1", { name: "Test participant" });
-  makeParticipant("same-name-2", { name: "Test participant" });
-  await until(() => countOff("same-name-1") === 1 && countOff("same-name-2") === 1 && idle(), "duplicate participant names");
-  check(true, "Participants with identical names are both handled");
+  const menuCountAfterDone = testState.menus.length;
+  makeParticipant("late");
+  await wait(6500);
+  check(countOff("late") === 0 && !testState.menus.includes("late"), "Participants arriving after Done are left alone");
+  check(countOff("rejected") === 1 && testState.menus.length === menuCountAfterDone,
+    "A completed pass does not reopen menus or retry failed camera actions");
+  check(done() && panel().getElementById("toggle").disabled, "Done persists and Pause/Resume cannot restart a completed pass");
+  participants.get("rejected").remove();
+  participants.get("menu-share").remove();
 
   const participantA = participants.get("participant-a");
   participantA.more.click();
@@ -65,58 +82,45 @@ try {
   await wait(1000);
   check(countOff("participant-a") === 1, "Replacing an ID-less People row preserves its unique-name override");
 
-  makeParticipant("already-off", { off: true });
-  await until(() => testState.menus.includes("already-off") && idle(), "already disabled feed");
-  check(countOff("already-off") === 0 && !testState.on.includes("already-off"), "An already-disabled camera is never turned back on");
-
   const dialog = document.createElement("div");
   dialog.setAttribute("role", "dialog");
   dialog.textContent = "Your settings";
   document.body.append(dialog);
   makeParticipant("after-dialog");
-  await wait(1100);
+  applyAgain();
+  await wait(2500);
   check(countOff("after-dialog") === 0 && dialog.isConnected, "An unrelated dialog blocks automation and remains untouched");
-  dialog.remove();
-  await until(() => countOff("after-dialog") === 1 && idle(), "closed dialog");
-
   toggle();
+  dialog.remove();
   makeParticipant("paused");
   await wait(1100);
   check(countOff("paused") === 0 && status() === "Paused", "Pause stops camera actions for new participants");
   toggle();
-  await until(() => countOff("paused") === 1 && idle(), "resumed automation");
-  check(true, "Resume processes cameras that appeared while paused");
-
-  makeParticipant("rejected", { rejectOff: true });
-  await until(() => status().includes("Unconfirmed: 1") && idle(), "failed native action");
-  check(participants.get("rejected").watching, "A native action that does not change the feed is reported as unconfirmed");
-  await until(() => countOff("rejected") === 2 && idle(), "second attempt", 8500);
-  await wait(6500);
-  check(countOff("rejected") === 2, "Failed camera actions stop after two attempts");
-  participants.get("rejected").remove();
-
-  makeParticipant("menu-share", { menuPresentation: true });
-  await until(() => testState.menus.includes("menu-share") && idle(), "presentation menu guard");
-  check(countOff("menu-share") === 0, "Presentation controls in a menu prevent a video-off click even without a tile marker");
-  participants.get("menu-share").remove();
+  await until(done, "resumed pass", 10000);
+  check(countOff("after-dialog") === 1 && countOff("paused") === 1, "Resume finishes the pass after a dialog or pause");
+  check(countOff("late") === 1 && countOff("participant-a") === 2, "Apply again explicitly starts a new pass over current participants");
 
   makeParticipant("leaving", { delay: 1200 });
-  await until(() => testState.menus.includes("leaving"), "menu before leaving");
+  applyAgain();
+  await until(() => testState.menus.includes("leaving"), "menu before leaving", 10000);
   document.getElementById("leave").click();
   await wait(1500);
   check(countOff("leaving") === 0, "Leaving cancels an in-flight camera action");
   participants.get("leaving").remove();
+  participants.get("participant-a").remove();
+  makeParticipant("participant-a", { language: "watch" });
   join();
-  await until(() => countOff("participant-a") === 2 && idle(), "same-room rejoin");
-  check(true, "Rejoining the same meeting reapplies the camera-off default");
+  await until(() => countOff("participant-a") === 3 && done(), "same-room rejoin", 12000);
+  check(true, "Rejoining the same meeting runs one new camera-off pass");
 
+  applyAgain();
   toggle();
   document.getElementById("participants").replaceChildren();
   document.getElementById("tiles").replaceChildren();
   document.getElementById("people").hidden = true;
   history.pushState({}, "", "/klm-nopq-rst");
   makeParticipant("new-room");
-  await until(() => countOff("new-room") === 1 && idle(), "new room");
+  await until(() => countOff("new-room") === 1 && done(), "new room", 8000);
   check(panel().getElementById("toggle").textContent === "Pause", "A new room starts with camera automation enabled");
 
   // Only one row is mounted at a time, as in a virtualized People list.
@@ -143,12 +147,22 @@ try {
   list.scrollTop = 230;
   renderVisibleParticipant();
   history.pushState({}, "", "/uvw-xyza-bcd");
-  await until(() => Array.from({ length: 8 }, (_, index) => countOff(`virtual-${index}`)).every((count) => count === 1) && idle(),
-    "all virtualized participants", 20000);
+  await until(() => Array.from({ length: 8 }, (_, index) => countOff(`virtual-${index}`)).every((count) => count === 1) && done(),
+    "all virtualized participants", 25000);
   await until(() => list.scrollTop === 230, "restoring the People scroll position");
   clearInterval(virtualizationTimer);
+  list.removeEventListener("scroll", renderVisibleParticipant);
   check(true, "A virtualized People list is scanned from top to bottom so off-screen cameras are turned off");
   check(list.scrollTop === 230, "The automatic scan restores the original People-list scroll position");
+
+  list.replaceChildren();
+  list.style.cssText = "";
+  history.pushState({}, "", "/efg-hijk-lmn");
+  await until(() => done() && status() === "Done · Camera feeds off: 0", "an empty call");
+  check(status() === "Done · Camera feeds off: 0", "An empty call finishes its pass without waiting indefinitely");
+  makeParticipant("after-empty");
+  await wait(1100);
+  check(countOff("after-empty") === 0 && !testState.menus.includes("after-empty"), "An empty completed pass does not restart when a participant arrives");
   check(testState.unexpected.length === 0 && testState.on.join(",") === "participant-a",
     "The script never changes Audio only, outgoing cameras, mute/remove controls, or shared-content feeds");
 

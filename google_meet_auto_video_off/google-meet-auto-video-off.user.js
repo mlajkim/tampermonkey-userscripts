@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Google Meet Auto Video Off
 // @namespace    https://github.com/mlajkim/tampermonkey-userscripts
-// @version      0.2.1
-// @description  Save bandwidth by turning off participants' camera feeds on join, while keeping shared content visible.
+// @version      0.3.0
+// @description  Turn off participants' camera feeds once per call, while keeping shared content visible.
 // @author       mlajkim
 // @match        https://meet.google.com/*
 // @run-at       document-idle
@@ -159,7 +159,7 @@
   const section = element("section", "", { "aria-label": "Auto video off" });
   const header = element("header");
   const title = element("strong", "Auto video off ");
-  title.append(element("small", "v0.2.1"));
+  title.append(element("small", "v0.3.0"));
   header.append(title, element("button", "Pause", { id: "toggle", type: "button" }),
     element("button", "Apply again", { id: "retry", type: "button" }));
   section.append(header, element("p", "Waiting for a call", { id: "status", role: "status", "aria-live": "polite" }));
@@ -168,8 +168,8 @@
   const status = ui.getElementById("status");
   const toggle = ui.getElementById("toggle");
   const retry = ui.getElementById("retry");
-  const newSession = (room) => ({ room, joined: false, enabled: true, peopleRequested: false,
-    absentSince: null, handled: new Set(), attempts: new Map(), errors: new Set(), phase: "",
+  const newSession = (room) => ({ room, joined: false, enabled: true, done: false, peopleRequested: false,
+    absentSince: null, handled: new Set(), attempts: new Set(), errors: new Set(), phase: "",
     scan: null, scanDone: false, scanWaitUntil: 0 });
   let session = newSession(roomPath());
   let busy = false;
@@ -177,10 +177,13 @@
   let quietUntil = 0;
   function render() {
     host.hidden = !session.room;
-    const message = !session.joined ? "Waiting for a call" : !session.enabled ? "Paused" : session.phase ||
-      (session.handled.size || session.errors.size ? `Camera feeds off: ${session.handled.size}${session.errors.size ? ` · Unconfirmed: ${session.errors.size}` : ""}` : "Waiting for participant camera controls");
+    const summary = `Camera feeds off: ${session.handled.size}${session.errors.size ? ` · Unconfirmed: ${session.errors.size}` : ""}`;
+    const message = !session.joined ? "Waiting for a call" : session.done ? `Done · ${summary}` :
+      !session.enabled ? "Paused" : session.phase ||
+      (session.handled.size || session.errors.size ? summary : "Waiting for participant camera controls");
     if (status.textContent !== message) status.textContent = message;
     toggle.textContent = session.enabled ? "Pause" : "Resume";
+    toggle.disabled = session.done;
     retry.disabled = busy || !session.joined;
   }
   function reset() { generation += 1; session = newSession(roomPath()); render(); }
@@ -237,8 +240,7 @@
     const valid = () => session === state && generation === epoch && state.enabled && state.joined &&
       roomPath() === state.room && !document.hidden && leaveControl();
     const targetKey = target.key;
-    const previous = state.attempts.get(targetKey);
-    state.attempts.set(targetKey, { count: (previous?.count || 0) + 1, time: Date.now() });
+    state.attempts.add(targetKey);
     const refresh = () => candidates().find((item) => item.key === targetKey);
     async function waitFor(find) {
       const deadline = Date.now() + 2000;
@@ -285,8 +287,7 @@
     } catch (error) {
       if (session === state) {
         if (error.message === "Interrupted") {
-          if (previous) state.attempts.set(targetKey, previous);
-          else state.attempts.delete(targetKey);
+          state.attempts.delete(targetKey);
         } else state.errors.add(targetKey);
       }
     } finally {
@@ -310,9 +311,11 @@
       render();
       return;
     }
+    // Allow the initial call controls and People rows to finish rendering.
+    if (!session.joined) session.scanWaitUntil = Date.now() + 2000;
     session.joined = true;
     session.absentSince = null;
-    if (!session.enabled || busy || Date.now() < Math.max(quietUntil, session.scanWaitUntil)) { render(); return; }
+    if (session.done || !session.enabled || busy || Date.now() < Math.max(quietUntil, session.scanWaitUntil)) { render(); return; }
     const panel = peoplePanel();
     if (menus().length || all('[role="dialog"]').some((node) => visible(node) && node !== panel && !node.contains(panel) &&
         !(node.getAttribute("aria-modal") !== "true" && matches(node, REACTION_TRAY)))) {
@@ -329,18 +332,15 @@
         if (people) {
           people.click();
           session.peopleRequested = true;
+          session.scanWaitUntil = Date.now() + 2000;
           render();
           return;
         }
       }
     }
-    const target = candidates().find((item) => {
-      if (session.handled.has(item.key)) return false;
-      const attempt = session.attempts.get(item.key);
-      return !attempt || (attempt.count < 2 && Date.now() - attempt.time >= 6000);
-    });
+    const target = candidates().find((item) => !session.attempts.has(item.key));
     if (target) void turnOff(target);
-    else scanPeople(panel);
+    else if (!scanPeople(panel)) session.done = true;
     render();
   }
   setInterval(tick, 500);
