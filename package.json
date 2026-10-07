@@ -3,7 +3,8 @@
   "private": true,
   "description": "A collection of Tampermonkey userscripts by mlajkim.",
   "workspaces": [
-    "google_meet_transcript"
+    "google_meet_transcript",
+    "google_meet_auto_video_off"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",

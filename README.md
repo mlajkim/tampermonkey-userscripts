@@ -9,6 +9,7 @@ A collection of Tampermonkey userscripts by [mlajkim](https://github.com/mlajkim
 | Userscript | What it does |
 | --- | --- |
 | [Google Meet Transcript](google_meet_transcript/README.md) | Collects Meet captions automatically, backs up the full transcript every 30 minutes, and downloads remaining changes when the meeting ends |
+| [Google Meet Auto Video Off](google_meet_auto_video_off/README.md) | Saves bandwidth by turning off participants' camera feeds while keeping shared content visible |
 
 ## How to setup
 
@@ -34,3 +35,5 @@ npm run test:browser
 The root commands run across the projects listed in `package.json` under `workspaces`. You can also run the same commands from an individual script's directory; see its README for any additional requirements.
 
 To add another userscript, give it a separate top-level directory and add it to the table above. Register scripts that use Node.js in the root `workspaces` list so the shared commands include them.
+
+Use synthetic data in tests. Local browser captures belong in ignored `temp/` or numbered `temp` directories.
