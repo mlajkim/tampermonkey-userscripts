@@ -50,7 +50,7 @@ try {
     "--disable-background-networking", "--disable-component-update", "--disable-sync",
     "--disable-extensions", "--disable-default-apps", "--metrics-recording-only",
     "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
-    `--user-data-dir=${profile}`, "--dump-dom", "--virtual-time-budget=20000", address,
+    `--user-data-dir=${profile}`, "--dump-dom", "--virtual-time-budget=30000", address,
   ], { stdio: ["ignore", "pipe", "pipe"] });
   let output = "";
   let diagnostics = "";

@@ -1,6 +1,6 @@
 {
   "name": "google-meet-transcript",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "private": true,
   "type": "module",
   "description": "Keep a running Google Meet caption log and download automatic backups.",
