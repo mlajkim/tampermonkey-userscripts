@@ -4,7 +4,7 @@ const LEAVE_CONTROL = /^(?:leave (?:the )?(?:call|meeting)|(?:通話|会議|ミ�
 const ENDED_HEADING = /^(?:you(?:['’]ve| have)? left (?:the )?(?:meeting|call)|(?:this |the )?meeting has ended|you(?:['’]ve| have) been removed from (?:the )?meeting|you were removed from (?:the )?meeting|(?:この)?(?:通話|会議|ミーティング)(?:から退出しました|を退出しました|(?:は|が)終了しました|から削除されました)|(?:회의|통화)(?:에서 (?:나왔습니다|나갔습니다|퇴장되었습니다)|가 종료되었습니다))[.!。！]?$/iu;
 
 export function roomFromPath(path) {
-  return path.match(/^\/([a-z]{3}-[a-z]{4}-[a-z]{3})(?:\/|$)/iu)?.[1] || null;
+  return path.match(/^\/(?:meet\/)?([a-z]{3}-[a-z]{4}-[a-z]{3})(?:\/|$)/iu)?.[1] || null;
 }
 
 export function isLeaveLabel(label) {

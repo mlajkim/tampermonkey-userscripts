@@ -8,6 +8,14 @@
   .caption { padding: 8px; }
 </style>
 <h1>Local caption fixture</h1>
+<label for="meet-translation-language">Translated captions language</label>
+<select id="meet-translation-language"><option>French</option></select>
+<label for="meet-spoken-language">Meeting language</label>
+<select id="meet-spoken-language">
+  <option value="en-US">English (United States)</option>
+  <option value="ja-JP">日本語</option>
+  <option value="ko-KR">한국어</option>
+</select>
 <div id="captions" role="region" aria-label="字幕"></div>
 <div role="region" aria-label="In-call messages">
   <div><div><span>Chat user</span></div><div>Do not collect chat messages.</div></div>
@@ -18,7 +26,10 @@
     sessionStorage.removeItem("google-meet-transcript:v1:abc-defg-hij");
     sessionStorage.removeItem("test:clear-room-tab");
   }
-  window.testState = { downloads: [], offset: Number(sessionStorage.getItem("test:offset") || 0), confirmations: 0 };
+  window.testState = { downloads: [], offset: Number(sessionStorage.getItem("test:offset") || 0), confirmations: 0, languageChanges: 0 };
+  // A default saved by an earlier script version must have no effect.
+  localStorage.setItem("google-meet-transcript:caption-language:v1", JSON.stringify({ key: "ja", label: "日本語" }));
+  document.getElementById("meet-spoken-language").addEventListener("change", () => { window.testState.languageChanges += 1; });
   const nativeNow = Date.now;
   Date.now = () => nativeNow() + window.testState.offset;
   const blobs = new Map();

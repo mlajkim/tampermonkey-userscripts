@@ -28,3 +28,13 @@ test("only meeting-room paths activate capture, and final filenames are distingu
   assert.match(exportFilename("abc-defg-hij", "txt", 0, true), /-final\.txt$/);
   assert.doesNotMatch(exportFilename("abc-defg-hij", "txt", 0), /-final/);
 });
+
+test("meeting links with the /meet/ prefix resolve to the same room", () => {
+  for (const path of ["/abc-defg-hij", "/meet/abc-defg-hij", "/meet/abc-defg-hij/"]) {
+    const url = new URL(`${path}?authuser=0`, "https://meet.google.com");
+    assert.equal(roomFromPath(url.pathname), "abc-defg-hij", url.href);
+  }
+  for (const path of ["/meet", "/meet/", "/meet/landing", "/meet/abc-defg-hij-extra", "/lookup/abc-defg-hij"]) {
+    assert.equal(roomFromPath(path), null, path);
+  }
+});

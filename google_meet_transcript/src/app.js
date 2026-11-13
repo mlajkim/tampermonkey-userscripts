@@ -2,6 +2,8 @@ import { Transcript, BackupSchedule, exportTranscript, exportFilename } from "./
 import { captionRegions, captionRows, readCaptionRow } from "./captions.js";
 import { RoomRecovery } from "./recovery.js";
 import { clickedLeaveControl, meetingHasEnded, roomFromPath } from "./meeting.js";
+import { makePanelMovable } from "./panel-position.js";
+import { readCaptionLanguage } from "./caption-language.js";
 
 const PANEL_ID = "google-meet-transcript-panel";
 
@@ -48,7 +50,8 @@ function startRoom(room) {
     :host { all: initial; position: fixed; right: 18px; bottom: 88px; z-index: 2147483000;
       color-scheme: light; font: 13px/1.45 system-ui, sans-serif; color: #172b3a; }
     * { box-sizing: border-box; }
-    .panel { width: 292px; max-width: calc(100vw - 36px); background: #fff;
+    .panel { width: 292px; max-width: calc(100vw - 36px); max-height: calc(100vh - 24px);
+      overflow: auto; background: #fff;
       border: 1px solid #ccd7df; border-radius: 12px; box-shadow: 0 6px 24px #0003; }
     .panel-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
     .panel-heading { flex: 1; min-width: 0; }
@@ -63,6 +66,9 @@ function startRoom(room) {
     .recording-status.recording .recording-dot { box-shadow: 0 0 0 3px #b91c1c1a; }
     button.capture { flex-shrink: 0; min-width: 68px; font-weight: 650; }
     button.capture.recording { background: #b91c1c; color: #fff; border-color: #b91c1c; }
+    button.move { flex: 0 0 24px; padding: 4px 0; border: 0; font-size: 20px;
+      color: #526574; cursor: grab; touch-action: none; user-select: none; }
+    button.move.dragging { cursor: grabbing; }
     .body { padding: 0 14px 14px; }
     p { margin: 0 0 10px; }
     .muted { color: #526574; font-size: 12px; }
@@ -84,17 +90,20 @@ function startRoom(room) {
   `);
   const panel = element("section", { class: "panel", "aria-label": "Meet transcript" });
   const header = element("div", { class: "panel-header" });
+  const move = element("button", { id: "move-panel", type: "button", class: "move",
+    "aria-label": "Move transcript panel",
+    title: "Drag to move. Arrow keys move 10 px; Shift + arrow moves 1 px." }, "⠿");
   const heading = element("div", { class: "panel-heading" });
   const disclosure = element("button", { id: "collapse", type: "button", class: "disclosure",
-    "aria-expanded": "true", "aria-controls": "panel-body", title: "Collapse panel" });
+    "aria-expanded": "false", "aria-controls": "panel-body", title: "Expand panel" });
   disclosure.append(element("span", { class: "chevron", "aria-hidden": "true" }, "▾"), document.createTextNode("Meet transcript"));
   const recordingStatus = element("div", { id: "recording-status", class: "recording-status", role: "status", "aria-live": "polite" });
   const recordingLabel = element("span", { id: "recording-label" });
   recordingStatus.append(element("span", { class: "recording-dot", "aria-hidden": "true" }), recordingLabel);
   heading.append(disclosure, recordingStatus);
   const toggle = element("button", { id: "capture", type: "button", class: "capture" }, "Record");
-  header.append(heading, toggle);
-  const body = element("div", { id: "panel-body", class: "body" });
+  header.append(move, heading, toggle);
+  const body = element("div", { id: "panel-body", class: "body", hidden: "" });
   const status = element("p", { id: "status", role: "status", "aria-live": "polite" });
   const hint = element("p", { id: "hint", class: "muted" });
   const actions = element("div", { class: "actions" });
@@ -124,7 +133,8 @@ function startRoom(room) {
   const ownName = element("input", { id: "own-name", type: "text", maxlength: "120", autocomplete: "off" });
   ownName.value = typeof recovered?.ownName === "string" ? recovered.ownName.slice(0, 120) : "";
   nameLabel.append(ownName);
-  options.append(nameLabel);
+  const resetPosition = element("button", { id: "reset-position", type: "button" }, "Reset panel position");
+  options.append(nameLabel, resetPosition);
   const warning = element("p", { id: "warning", class: "muted warning", role: "alert", hidden: "" });
   const recoveryNotice = element("p", { class: "muted", id: "recovery-notice" }, "Recovered the last log for this meeting. Download it or use New log to start fresh.");
   recoveryNotice.hidden = !fromClosedTab;
@@ -132,11 +142,17 @@ function startRoom(room) {
   panel.append(header, body);
   shadow.append(style, panel);
   document.body.append(host);
+  const placement = makePanelMovable(host, move);
+  resetPosition.addEventListener("click", () => placement.reset());
 
   function render(now = Date.now()) {
     const recording = capturing && !finished && regionFound;
-    const nextRecordingLabel = recording ? "Recording" : "Not recording";
-    if (recordingLabel.textContent !== nextRecordingLabel) recordingLabel.textContent = nextRecordingLabel;
+    const language = recording ? readCaptionLanguage(document) : null;
+    const nextRecordingLabel = recording ? (language ? `Recording (${language})` : "Recording") : "Not recording";
+    if (recordingLabel.textContent !== nextRecordingLabel) {
+      recordingLabel.textContent = nextRecordingLabel;
+      placement.refresh();
+    }
     recordingStatus.classList.toggle("recording", recording);
     recordingStatus.title = finished ? "Meeting ended" : !capturing ? "Capture is paused" :
       !regionFound ? "Turn on Meet captions to start recording" : "Collecting Meet captions";
@@ -233,6 +249,7 @@ function startRoom(room) {
     body.hidden = !body.hidden;
     disclosure.setAttribute("aria-expanded", String(!body.hidden));
     disclosure.title = body.hidden ? "Expand panel" : "Collapse panel";
+    placement.refresh();
   });
   toggle.addEventListener("click", () => {
     if (capturing) scan();
@@ -286,13 +303,15 @@ function startRoom(room) {
     if (clickedLeaveControl(event)) finishDownload();
   };
   document.addEventListener("click", leaveClick, true);
+  const languageChanged = () => render();
+  document.addEventListener("change", languageChanged, true);
   const observer = new MutationObserver(refresh);
   observer.observe(document.body, {
     childList: true,
     characterData: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ["aria-label", "aria-hidden", "hidden"],
+    attributeFilter: ["aria-label", "aria-labelledby", "aria-hidden", "hidden", "aria-valuetext", "aria-selected", "aria-checked", "aria-expanded"],
   });
   const timer = setInterval(() => {
     refresh();
@@ -310,8 +329,10 @@ function startRoom(room) {
   return () => {
     finishDownload();
     observer.disconnect();
+    placement.destroy();
     clearInterval(timer);
     document.removeEventListener("click", leaveClick, true);
+    document.removeEventListener("change", languageChanged, true);
     window.removeEventListener("pagehide", finishDownload);
     window.removeEventListener("beforeunload", finishDownload);
     document.removeEventListener("visibilitychange", leaving);
