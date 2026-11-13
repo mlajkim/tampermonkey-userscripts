@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Meet Transcript
 // @namespace    https://github.com/mlajkim/tampermonkey-userscripts
-// @version      0.2.0
+// @version      0.2.5
 // @description  Automatically capture captions, back up every 30 minutes, and download on leaving.
 // @author       mlajkim
 // @match        https://meet.google.com/*
@@ -291,7 +291,7 @@ const LEAVE_CONTROL = /^(?:leave (?:the )?(?:call|meeting)|(?:通話|会議|ミ�
 const ENDED_HEADING = /^(?:you(?:['’]ve| have)? left (?:the )?(?:meeting|call)|(?:this |the )?meeting has ended|you(?:['’]ve| have) been removed from (?:the )?meeting|you were removed from (?:the )?meeting|(?:この)?(?:通話|会議|ミーティング)(?:から退出しました|を退出しました|(?:は|が)終了しました|から削除されました)|(?:회의|통화)(?:에서 (?:나왔습니다|나갔습니다|퇴장되었습니다)|가 종료되었습니다))[.!。！]?$/iu;
 
 function roomFromPath(path) {
-  return path.match(/^\/([a-z]{3}-[a-z]{4}-[a-z]{3})(?:\/|$)/iu)?.[1] || null;
+  return path.match(/^\/(?:meet\/)?([a-z]{3}-[a-z]{4}-[a-z]{3})(?:\/|$)/iu)?.[1] || null;
 }
 
 function isLeaveLabel(label) {
@@ -312,6 +312,169 @@ function meetingHasEnded(document) {
   return [...document.querySelectorAll('h1, h2, [role="heading"], [role="alert"]')]
     .some((node) => !node.closest('[hidden], [aria-hidden="true"], [role="region"], [role="log"]') &&
       node.getClientRects().length > 0 && isEndedHeading(node.innerText));
+}
+
+// src/panel-position.js
+const PANEL_POSITION_KEY = "google-meet-transcript:panel-position:v1";
+const PANEL_MARGIN = 12;
+
+function fitPanelPosition(position, size, viewport) {
+  return {
+    left: Math.max(PANEL_MARGIN, Math.min(position.left, viewport.width - size.width - PANEL_MARGIN)),
+    top: Math.max(PANEL_MARGIN, Math.min(position.top, viewport.height - size.height - PANEL_MARGIN)),
+  };
+}
+
+function makePanelMovable(host, handle) {
+  let position = null;
+  let drag = null;
+  try {
+    const saved = JSON.parse(localStorage.getItem(PANEL_POSITION_KEY));
+    if (Number.isFinite(saved?.left) && Number.isFinite(saved?.top)) position = saved;
+  } catch { /* Position preferences must not prevent caption capture. */ }
+
+  function fit(candidate) {
+    return fitPanelPosition(candidate, host.getBoundingClientRect(), {
+      width: window.innerWidth, height: window.innerHeight,
+    });
+  }
+
+  function place() {
+    const size = host.getBoundingClientRect();
+    const next = fit(position || {
+      left: window.innerWidth - size.width - 18,
+      top: window.innerHeight - size.height - 88,
+    });
+    Object.assign(host.style, {
+      left: `${next.left}px`, top: `${next.top}px`, right: "auto", bottom: "auto",
+    });
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(PANEL_POSITION_KEY, JSON.stringify(position));
+    } catch { /* Moving still works when persistent storage is unavailable. */ }
+  }
+
+  function start(event) {
+    if (event.button !== 0 || !event.isPrimary || drag) return;
+    handle.setPointerCapture(event.pointerId);
+    const bounds = host.getBoundingClientRect();
+    drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: bounds.left, top: bounds.top };
+    handle.classList.add("dragging");
+    event.preventDefault();
+  }
+
+  function move(event) {
+    if (!drag || event.pointerId !== drag.id) return;
+    position = fit({ left: drag.left + event.clientX - drag.x, top: drag.top + event.clientY - drag.y });
+    place();
+  }
+
+  function end(event) {
+    if (!drag || event.pointerId !== drag.id) return;
+    drag = null;
+    handle.classList.remove("dragging");
+    if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+    save();
+  }
+
+  function keydown(event) {
+    const directions = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+    const direction = directions[event.key];
+    if (!direction || event.altKey || event.ctrlKey || event.metaKey) return;
+    event.preventDefault();
+    const bounds = host.getBoundingClientRect();
+    const step = event.shiftKey ? 1 : 10;
+    position = fit({ left: bounds.left + direction[0] * step, top: bounds.top + direction[1] * step });
+    place();
+    save();
+  }
+
+  const listeners = { pointerdown: start, pointermove: move, pointerup: end, pointercancel: end,
+    lostpointercapture: end, keydown };
+  for (const [type, listener] of Object.entries(listeners)) handle.addEventListener(type, listener);
+  const observer = new ResizeObserver(place);
+  observer.observe(host);
+  window.addEventListener("resize", place);
+  place();
+
+  return {
+    refresh: place,
+    reset() {
+      position = null;
+      place();
+      save();
+    },
+    destroy() {
+      for (const [type, listener] of Object.entries(listeners)) handle.removeEventListener(type, listener);
+      if (drag && handle.hasPointerCapture(drag.id)) handle.releasePointerCapture(drag.id);
+      observer.disconnect();
+      window.removeEventListener("resize", place);
+    },
+  };
+}
+
+// src/caption-language.js
+const LANGUAGE_LABEL = /(?:spoken|meeting|captions?|subtitles?)\s+language|字幕の?言語|会議の言語|音声言語|話されている言語|자막\s*언어|회의\s*언어|음성\s*언어|사용\s*언어/iu;
+const TRANSLATED_LABEL = /translat|翻訳|번역/iu;
+const LANGUAGE_CONTROLS = 'select, [role="combobox"], button, [role="button"]';
+
+function languageText(node) {
+  return (node?.innerText ?? node?.textContent ?? "").replace(/\s+/gu, " ").trim();
+}
+
+function languageVisible(node) {
+  return !node.closest('[hidden], [aria-hidden="true"]') && node.getClientRects().length > 0;
+}
+
+function languageControlName(node) {
+  const labelled = (node.getAttribute("aria-labelledby") || "").split(/\s+/u)
+    .map((id) => languageText(node.ownerDocument.getElementById(id))).join(" ");
+  return [node.getAttribute("aria-label"), labelled,
+    ...[...(node.labels || [])].map(languageText)].filter(Boolean).join(" ") || languageText(node);
+}
+
+function captionLanguageKey(label) {
+  const text = label.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
+  // Match across Meet's English, Japanese, and Korean interfaces. Preserve
+  // regional variants and other languages instead of guessing a locale.
+  if (/^(?:japanese|日本語|일본어|ja(?:-jp)?)$/u.test(text)) return "ja";
+  if (/^(?:korean|한국어|韓国語|ko(?:-kr)?)$/u.test(text)) return "ko";
+  if (/^(?:english|英語|영어|en)$/u.test(text)) return "en";
+  if (/^(?:english\s*\(united states\)|英語\s*\(米国\)|영어\s*\(미국\)|en-us)$/u.test(text)) return "en-us";
+  if (/^(?:english\s*\(united kingdom\)|英語\s*\(イギリス\)|영어\s*\(영국\)|en-gb)$/u.test(text)) return "en-gb";
+  return text;
+}
+
+function captionLanguageName(label) {
+  const names = { ja: "Japanese", ko: "Korean", en: "English",
+    "en-us": "English (United States)", "en-gb": "English (United Kingdom)" };
+  return names[captionLanguageKey(label)] || label;
+}
+
+function languageValue(control) {
+  if (control.tagName === "SELECT") return languageText(control.selectedOptions[0]);
+  const selected = control.querySelector('[aria-selected="true"], [aria-checked="true"]');
+  let label = control.getAttribute("aria-valuetext") || languageText(selected) || languageText(control);
+  if (!label || label === languageControlName(control)) label = label || languageControlName(control);
+  label = label.replace(LANGUAGE_LABEL, "").replace(/^[\s:：-]+|[\s:：-]+$/gu, "");
+  return label && label.length <= 120 ? label : "";
+}
+
+function readCaptionLanguage(document) {
+  const controls = [...document.querySelectorAll(LANGUAGE_CONTROLS)]
+    .filter((node) => languageVisible(node) && !node.disabled && node.getAttribute("aria-disabled") !== "true");
+  const control = controls.find((node) => LANGUAGE_LABEL.test(languageControlName(node)) &&
+    !TRANSLATED_LABEL.test(languageControlName(node))) || controls.find((node) => {
+    // Some Meet versions put a language-only button in the caption toolbar.
+    const region = node.closest('[role="region"][aria-label], [role="log"][aria-label]');
+    return region && /caption|subtitle|字幕|자막/iu.test(region.getAttribute("aria-label")) &&
+      /^(?:ja|ko|en|en-us|en-gb)$/u.test(captionLanguageKey(languageText(node)));
+  });
+  if (!control) return null;
+  const label = languageValue(control);
+  return label ? captionLanguageName(label) : null;
 }
 
 // src/app.js
@@ -361,7 +524,8 @@ function startRoom(room) {
     :host { all: initial; position: fixed; right: 18px; bottom: 88px; z-index: 2147483000;
       color-scheme: light; font: 13px/1.45 system-ui, sans-serif; color: #172b3a; }
     * { box-sizing: border-box; }
-    .panel { width: 292px; max-width: calc(100vw - 36px); background: #fff;
+    .panel { width: 292px; max-width: calc(100vw - 36px); max-height: calc(100vh - 24px);
+      overflow: auto; background: #fff;
       border: 1px solid #ccd7df; border-radius: 12px; box-shadow: 0 6px 24px #0003; }
     .panel-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
     .panel-heading { flex: 1; min-width: 0; }
@@ -376,6 +540,9 @@ function startRoom(room) {
     .recording-status.recording .recording-dot { box-shadow: 0 0 0 3px #b91c1c1a; }
     button.capture { flex-shrink: 0; min-width: 68px; font-weight: 650; }
     button.capture.recording { background: #b91c1c; color: #fff; border-color: #b91c1c; }
+    button.move { flex: 0 0 24px; padding: 4px 0; border: 0; font-size: 20px;
+      color: #526574; cursor: grab; touch-action: none; user-select: none; }
+    button.move.dragging { cursor: grabbing; }
     .body { padding: 0 14px 14px; }
     p { margin: 0 0 10px; }
     .muted { color: #526574; font-size: 12px; }
@@ -397,17 +564,20 @@ function startRoom(room) {
   `);
   const panel = element("section", { class: "panel", "aria-label": "Meet transcript" });
   const header = element("div", { class: "panel-header" });
+  const move = element("button", { id: "move-panel", type: "button", class: "move",
+    "aria-label": "Move transcript panel",
+    title: "Drag to move. Arrow keys move 10 px; Shift + arrow moves 1 px." }, "⠿");
   const heading = element("div", { class: "panel-heading" });
   const disclosure = element("button", { id: "collapse", type: "button", class: "disclosure",
-    "aria-expanded": "true", "aria-controls": "panel-body", title: "Collapse panel" });
+    "aria-expanded": "false", "aria-controls": "panel-body", title: "Expand panel" });
   disclosure.append(element("span", { class: "chevron", "aria-hidden": "true" }, "▾"), document.createTextNode("Meet transcript"));
   const recordingStatus = element("div", { id: "recording-status", class: "recording-status", role: "status", "aria-live": "polite" });
   const recordingLabel = element("span", { id: "recording-label" });
   recordingStatus.append(element("span", { class: "recording-dot", "aria-hidden": "true" }), recordingLabel);
   heading.append(disclosure, recordingStatus);
   const toggle = element("button", { id: "capture", type: "button", class: "capture" }, "Record");
-  header.append(heading, toggle);
-  const body = element("div", { id: "panel-body", class: "body" });
+  header.append(move, heading, toggle);
+  const body = element("div", { id: "panel-body", class: "body", hidden: "" });
   const status = element("p", { id: "status", role: "status", "aria-live": "polite" });
   const hint = element("p", { id: "hint", class: "muted" });
   const actions = element("div", { class: "actions" });
@@ -437,7 +607,8 @@ function startRoom(room) {
   const ownName = element("input", { id: "own-name", type: "text", maxlength: "120", autocomplete: "off" });
   ownName.value = typeof recovered?.ownName === "string" ? recovered.ownName.slice(0, 120) : "";
   nameLabel.append(ownName);
-  options.append(nameLabel);
+  const resetPosition = element("button", { id: "reset-position", type: "button" }, "Reset panel position");
+  options.append(nameLabel, resetPosition);
   const warning = element("p", { id: "warning", class: "muted warning", role: "alert", hidden: "" });
   const recoveryNotice = element("p", { class: "muted", id: "recovery-notice" }, "Recovered the last log for this meeting. Download it or use New log to start fresh.");
   recoveryNotice.hidden = !fromClosedTab;
@@ -445,11 +616,17 @@ function startRoom(room) {
   panel.append(header, body);
   shadow.append(style, panel);
   document.body.append(host);
+  const placement = makePanelMovable(host, move);
+  resetPosition.addEventListener("click", () => placement.reset());
 
   function render(now = Date.now()) {
     const recording = capturing && !finished && regionFound;
-    const nextRecordingLabel = recording ? "Recording" : "Not recording";
-    if (recordingLabel.textContent !== nextRecordingLabel) recordingLabel.textContent = nextRecordingLabel;
+    const language = recording ? readCaptionLanguage(document) : null;
+    const nextRecordingLabel = recording ? (language ? `Recording (${language})` : "Recording") : "Not recording";
+    if (recordingLabel.textContent !== nextRecordingLabel) {
+      recordingLabel.textContent = nextRecordingLabel;
+      placement.refresh();
+    }
     recordingStatus.classList.toggle("recording", recording);
     recordingStatus.title = finished ? "Meeting ended" : !capturing ? "Capture is paused" :
       !regionFound ? "Turn on Meet captions to start recording" : "Collecting Meet captions";
@@ -546,6 +723,7 @@ function startRoom(room) {
     body.hidden = !body.hidden;
     disclosure.setAttribute("aria-expanded", String(!body.hidden));
     disclosure.title = body.hidden ? "Expand panel" : "Collapse panel";
+    placement.refresh();
   });
   toggle.addEventListener("click", () => {
     if (capturing) scan();
@@ -599,13 +777,15 @@ function startRoom(room) {
     if (clickedLeaveControl(event)) finishDownload();
   };
   document.addEventListener("click", leaveClick, true);
+  const languageChanged = () => render();
+  document.addEventListener("change", languageChanged, true);
   const observer = new MutationObserver(refresh);
   observer.observe(document.body, {
     childList: true,
     characterData: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ["aria-label", "aria-hidden", "hidden"],
+    attributeFilter: ["aria-label", "aria-labelledby", "aria-hidden", "hidden", "aria-valuetext", "aria-selected", "aria-checked", "aria-expanded"],
   });
   const timer = setInterval(() => {
     refresh();
@@ -623,8 +803,10 @@ function startRoom(room) {
   return () => {
     finishDownload();
     observer.disconnect();
+    placement.destroy();
     clearInterval(timer);
     document.removeEventListener("click", leaveClick, true);
+    document.removeEventListener("change", languageChanged, true);
     window.removeEventListener("pagehide", finishDownload);
     window.removeEventListener("beforeunload", finishDownload);
     document.removeEventListener("visibilitychange", leaving);

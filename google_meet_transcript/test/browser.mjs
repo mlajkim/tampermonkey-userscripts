@@ -25,6 +25,7 @@ if (!chrome) throw new Error("Chrome/Chromium not found. Set CHROME_BIN to its e
 
 const routes = new Map([
   ["/abc-defg-hij", ["test/browser-fixture.html", "text/html"]],
+  ["/meet/abc-defg-hij", ["test/browser-fixture.html", "text/html"]],
   ["/google-meet-transcript.user.js", ["google-meet-transcript.user.js", "text/javascript"]],
   ["/test/browser-checks.js", ["test/browser-checks.js", "text/javascript"]],
 ]);
@@ -41,7 +42,7 @@ const server = createServer((request, response) => {
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const profile = await mkdtemp(join(tmpdir(), "google-meet-transcript-browser-"));
-const address = `http://127.0.0.1:${server.address().port}/abc-defg-hij`;
+const address = `http://127.0.0.1:${server.address().port}/meet/abc-defg-hij`;
 
 try {
   const child = spawn(chrome, [

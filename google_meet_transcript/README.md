@@ -28,9 +28,13 @@ Then select **File → Save**:
 
 ### Step 3. Enable captions
 
-Join a Google Meet meeting, turn on captions, and select the correct spoken language in Meet. The **Meet transcript** panel starts capturing automatically, including after a page reload; use **Pause** and **Record** to pause or resume.
+Join a Google Meet meeting and turn on captions. The **Meet transcript** panel starts capturing automatically, including after a page reload; use **Pause** and **Record** to pause or resume.
 
-Click **Meet transcript** to collapse or expand the panel. The recording status and button stay visible: a red dot, **Recording**, and a red **Pause** button indicate active caption capture; **Not recording** appears when paused, finished, or waiting for Meet captions to be enabled.
+The panel always starts **collapsed** on each page load and when changing meetings. Click **Meet transcript** to expand or collapse it. The recording status and capture button stay visible: a red dot, **Recording (Japanese)** (or the selected language), and a red **Pause** button indicate active caption capture; **Not recording** appears when paused, finished, or waiting for Meet captions to be enabled.
+
+The script uses Meet's currently selected spoken language. Change the language in Meet itself; the panel reads the visible language control and updates its recording status. If the current language cannot be detected, it simply shows **Recording**. Language controls in English, Japanese, and Korean are recognized; other language names are displayed as shown by Meet.
+
+Drag the **⠿** handle to move the panel out of the chat's way, whether expanded or collapsed. Its position is remembered across reloads and meetings in this browser profile when local storage is available. The panel stays within the window when resized or expanded. You can also focus the handle and use arrow keys to move it (hold Shift for smaller steps), or choose **Options → Reset panel position** to return to the bottom right.
 
 The script recognizes caption-panel labels in English, Japanese, and Korean. Under **Options**, you can optionally set the name used for “You”, “あなた”, or “나” in downloaded files.
 
