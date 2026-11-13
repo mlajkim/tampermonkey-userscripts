@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'; trusted-types 'none'">
+<title>Meet camera-feed controls fixture</title>
+<style>
+  body { font: 16px system-ui; padding: 30px; }
+  [role=listitem], #tiles > div { border: 1px solid #ccc; padding: 8px; margin: 4px; }
+  [role=menu] { background: #ddd; padding: 10px; }
+  #people[hidden] { display: none; }
+</style>
+<h1>Local Meet camera-feed controls fixture</h1>
+<div id="call-controls" role="toolbar"></div>
+<!-- Synthetic controls: no captured meeting data or page identifiers. -->
+<div role="region" aria-label="Call controls">
+  <div><div style="min-height:80px">
+    <div role="dialog" aria-label="Send a reaction" id="reaction-tray">
+      <button type="button" aria-label="Send thumbs up reaction">👍</button>
+    </div>
+  </div></div>
+</div>
+<div style="opacity:0;pointer-events:none"><ul role="menu" id="inactive-menu"><li role="menuitem">Inactive menu</li></ul></div>
+<aside id="people" aria-label="People" hidden>
+  <h2>People</h2>
+  <div id="participants" role="list"></div>
+</aside>
+<div id="tiles"></div>
+<pre id="results" data-state="running">Running browser checks…</pre>
+<script>
+  window.testState = { off: [], on: [], menus: [], unexpected: [], peopleOpens: 0 };
+  window.participants = new Map();
+  const translations = {
+    en: ["More actions", "Turn off video", "Turn on video"],
+    ja: ["その他のオプション", "動画をオフにする", "動画をオンにする"],
+    ko: ["더보기", "동영상 사용 중지", "동영상 사용 설정"],
+    watch: ["More options", "Don’t watch", "Start watching"],
+  };
+  window.makeParticipant = (id, options = {}) => {
+    const row = document.createElement("div");
+    if (!options.tile) row.setAttribute("role", "listitem");
+    if (options.idAttribute) row.setAttribute(options.idAttribute, id);
+    if (options.self) row.dataset.isSelf = "true";
+    if (options.presentation) row.dataset.isPresentation = "true";
+    if (options.label) row.setAttribute("aria-label", options.label);
+    const name = document.createElement("div");
+    name.dataset.participantName = options.name || id;
+    name.textContent = options.name || id;
+    row.append(name);
+    if (options.tile) row.append(document.createElement("canvas"));
+    const more = document.createElement("button");
+    const [moreLabel, offLabel, onLabel] = translations[options.language || "en"];
+    if (options.iconOnly) {
+      const icon = document.createElement("i");
+      icon.className = "google-symbols";
+      icon.textContent = "more_vert";
+      more.append(icon);
+    }
+    else { more.setAttribute("aria-label", moreLabel); more.textContent = "⋮"; }
+    more.setAttribute("aria-controls", `menu-${id}`);
+    row.watching = !options.off;
+    row.more = more;
+    const close = () => document.getElementById(`menu-${id}`)?.remove();
+    more.addEventListener("click", () => {
+      if (document.getElementById(`menu-${id}`)) { close(); return; }
+      testState.menus.push(id);
+      const menu = document.createElement("div");
+      menu.setAttribute("role", "menu");
+      menu.id = `menu-${id}`;
+      menu.addEventListener("keydown", (event) => { if (event.key === "Escape") close(); });
+      for (const text of ["Mute", "Remove participant", "Turn off camera"]) {
+        const item = document.createElement("button");
+        item.setAttribute("role", "menuitem");
+        item.textContent = text;
+        item.addEventListener("click", () => testState.unexpected.push(text));
+        menu.append(item);
+      }
+      if (options.menuPresentation) {
+        const item = document.createElement("button");
+        item.setAttribute("role", "menuitem");
+        item.textContent = "Stop presenting";
+        menu.append(item);
+      }
+      const action = document.createElement("button");
+      action.setAttribute("role", "menuitem");
+      const icon = document.createElement("span");
+      icon.className = "google-symbols";
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = "videocam_off";
+      action.append(icon, document.createTextNode(row.watching ? offLabel : onLabel));
+      action.addEventListener("click", () => {
+        (row.watching ? testState.off : testState.on).push(id);
+        if (!options.rejectOff) row.watching = !row.watching;
+        setTimeout(close, 40);
+      });
+      setTimeout(() => { if (menu.isConnected) menu.append(action); }, options.delay || 0);
+      document.body.append(menu);
+    });
+    row.append(more);
+    document.getElementById(options.tile ? "tiles" : "participants").append(row);
+    participants.set(id, row);
+    return row;
+  };
+  window.join = () => {
+    const leave = document.createElement("button");
+    // Deliberately use an unrecognized label: the Meet call-end icon identifies the call.
+    leave.setAttribute("aria-label", "Hang up");
+    const leaveIcon = document.createElement("i");
+    leaveIcon.className = "google-symbols";
+    leaveIcon.textContent = "call_end";
+    leave.append(leaveIcon);
+    leave.id = "leave";
+    leave.addEventListener("click", () => {
+      document.getElementById("call-controls").replaceChildren();
+      document.getElementById("people").hidden = true;
+      document.querySelectorAll('[role="menu"]').forEach((menu) => menu.remove());
+    });
+    // Exercise a People button with a count and no aria-label/aria-controls.
+    const people = document.createElement("div");
+    people.setAttribute("role", "button");
+    people.setAttribute("tabindex", "0");
+    people.setAttribute("aria-haspopup", "dialog");
+    people.setAttribute("aria-expanded", "false");
+    people.id = "people-toggle";
+    const content = document.createElement("div");
+    const label = document.createElement("span");
+    label.textContent = "People";
+    const counter = document.createElement("div");
+    const number = document.createElement("div");
+    number.textContent = "3";
+    counter.append(number);
+    content.append(label, counter);
+    people.append(content);
+    people.addEventListener("click", () => {
+      document.getElementById("people").hidden = !document.getElementById("people").hidden;
+      people.setAttribute("aria-expanded", String(!document.getElementById("people").hidden));
+      testState.peopleOpens++;
+    });
+    const settings = document.createElement("button");
+    settings.textContent = "Settings";
+    settings.addEventListener("click", () => testState.unexpected.push("Settings / Audio only"));
+    const camera = document.createElement("button");
+    camera.setAttribute("aria-label", "Turn off camera");
+    camera.addEventListener("click", () => testState.unexpected.push("outgoing camera"));
+    document.getElementById("call-controls").replaceChildren(leave, people, settings, camera);
+  };
+  makeParticipant("self", { self: true });
+  makeParticipant("named-self", { name: "Test user (You)" });
+  makeParticipant("share", { presentation: true });
+  makeParticipant("shared-video", { label: "A shared screen presentation" });
+  makeParticipant("participant-a", { language: "watch", delay: 200 });
+</script>
+<script src="/google-meet-auto-video-off.user.js"></script>
+<script type="module" src="/test/browser-checks.js"></script>
+</html>
