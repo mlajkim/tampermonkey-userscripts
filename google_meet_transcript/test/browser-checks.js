@@ -58,6 +58,9 @@ try {
     const expected = Number(sessionStorage.getItem("test:expected-count"));
     check(control("status").textContent === `Capturing · ${expected} captions`, "Local recovery restores the log when the previous tab's session storage is gone");
     check(!control("recovery-notice").hidden, "Recovered closed-tab data is identified in the panel");
+    await wait(1100);
+    check(window.testState.downloads.length === 0 && window.testState.captionClicks === 0,
+      "Closed-tab recovery waits for its backup interval and leaves enabled captions on");
     control("download").click();
     check((await latestText()).includes("Final first caption"), "The persistent recovery copy includes evicted captions");
 
@@ -106,7 +109,12 @@ try {
     const expected = Number(sessionStorage.getItem("test:expected-count"));
     check(control("status").textContent === `Capturing · ${expected} captions`, "Reload restores the log and resumes capture automatically");
     check(control("auto-finish").checked === false, "The final-download checkbox setting survives reload");
-    await wait();
+    await wait(1100);
+    check(window.testState.downloads.length === 0 && window.testState.captionClicks === 0,
+      "Reloading an overdue unsaved log does not immediately download or toggle enabled captions");
+    const nextAt = saved().schedule.nextAt;
+    check(nextAt > Date.now() + 29 * 60_000 && nextAt <= Date.now() + 30 * 60_000,
+      "An overdue restored log gets a fresh 30-minute interval from resumed capture");
     control("download").click();
     check(saved().transcript.entries.length === expected, "Reload does not duplicate the visible tail");
     check((await latestText()).includes("Final first caption"), "Reload retains captions evicted before the refresh");
@@ -116,6 +124,26 @@ try {
     sessionStorage.setItem("test:phase", "closed");
     location.reload();
   } else {
+    const captionToggle = document.getElementById("meet-captions-toggle");
+    check(control("recording-label").textContent === "Not recording", "Capture waits for Meet's caption controls to be available");
+    window.testState.offset += 31 * 60_000;
+    await wait(1100);
+    check(window.testState.downloads.length === 0 && window.testState.captionClicks === 0,
+      "Waiting more than 30 minutes with hidden caption controls does not download or click them");
+    captionToggle.disabled = true;
+    captionToggle.hidden = false;
+    await wait(1100);
+    check(window.testState.captionClicks === 0, "Unavailable caption controls are not clicked");
+    captionToggle.disabled = false;
+    await until(() => control("recording-label").textContent.startsWith("Recording"), "captions enabled automatically");
+    check(window.testState.captionClicks === 1 && window.testState.downloads.length === 0,
+      "The script turns on Meet captions once without downloading on entry");
+    window.testState.offset += 29 * 60_000;
+    await wait(1100);
+    check(window.testState.downloads.length === 0, "The first backup waits at least 30 minutes after caption capture starts");
+    window.testState.offset += 60_000;
+    await until(() => window.testState.downloads.length === 1, "first backup after 30 minutes of capture");
+    check((await latestText()).includes("First caption"), "The first automatic backup runs after the full capture interval");
     check(control("recording-label").textContent === "Recording (English (United States))",
       "Recording status uses Meet's selected spoken language rather than the translated-caption language");
     check(!control("change-language") && !control("remember-language") && !control("clear-language"),
@@ -205,14 +233,27 @@ try {
 
     control("capture").click();
     check(control("recording-label").textContent === "Not recording", "Pausing removes the Recording (language) status");
+    region.hidden = true;
+    captionToggle.setAttribute("aria-label", "字幕をオンにする（c）");
     const paused = makeCaption("Alex", "This happened while paused");
     wrapper.append(paused);
     await wait();
     paused.remove();
     await wait();
     control("capture").click();
+    await until(() => !region.hidden, "Record enables Japanese caption control");
+    check(window.testState.captionClicks === 2, "Record enables captions again using the Japanese Meet control");
     control("download").click();
     check(!(await latestText()).includes("This happened while paused"), "Pause stops collecting caption changes");
+
+    region.hidden = true;
+    captionToggle.setAttribute("aria-label", "자막 사용 설정(c)");
+    await wait(1100);
+    check(window.testState.captionClicks === 2, "Turning captions off in Meet is respected until Record is requested again");
+    control("capture").click();
+    control("capture").click();
+    await until(() => !region.hidden, "Record enables Korean caption control");
+    check(window.testState.captionClicks === 3, "Record enables captions using the Korean Meet control");
 
     control("format").value = "md";
     wrapper.append(makeCaption("Sam", "<script>alert(1)</script> **literal**"));

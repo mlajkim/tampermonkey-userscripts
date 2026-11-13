@@ -16,6 +16,7 @@
   <option value="ja-JP">日本語</option>
   <option value="ko-KR">한국어</option>
 </select>
+<button id="meet-captions-toggle" aria-label="Turn on captions (c)">Captions</button>
 <div id="captions" role="region" aria-label="字幕"></div>
 <div role="region" aria-label="In-call messages">
   <div><div><span>Chat user</span></div><div>Do not collect chat messages.</div></div>
@@ -26,12 +27,36 @@
     sessionStorage.removeItem("google-meet-transcript:v1:abc-defg-hij");
     sessionStorage.removeItem("test:clear-room-tab");
   }
-  window.testState = { downloads: [], offset: Number(sessionStorage.getItem("test:offset") || 0), confirmations: 0, languageChanges: 0 };
+  window.testState = { downloads: [], offset: Number(sessionStorage.getItem("test:offset") || 0), confirmations: 0, languageChanges: 0, captionClicks: 0 };
+  const captionToggle = document.getElementById("meet-captions-toggle");
+  const captionRegion = document.getElementById("captions");
+  const firstVisit = !sessionStorage.getItem("test:phase");
+  captionRegion.hidden = firstVisit;
+  captionToggle.hidden = firstVisit;
+  if (!firstVisit) captionToggle.setAttribute("aria-label", "Turn off captions (c)");
+  captionToggle.addEventListener("click", () => {
+    window.testState.captionClicks += 1;
+    // Meet can update its toolbar and caption panel asynchronously.
+    setTimeout(() => {
+      const region = document.getElementById("captions");
+      region.hidden = !region.hidden;
+      captionToggle.setAttribute("aria-label", region.hidden ? "Turn on captions (c)" : "Turn off captions (c)");
+    }, 120);
+  });
   // A default saved by an earlier script version must have no effect.
   localStorage.setItem("google-meet-transcript:caption-language:v1", JSON.stringify({ key: "ja", label: "日本語" }));
   document.getElementById("meet-spoken-language").addEventListener("change", () => { window.testState.languageChanges += 1; });
   const nativeNow = Date.now;
   Date.now = () => nativeNow() + window.testState.offset;
+  if (sessionStorage.getItem("test:phase") === "reload") {
+    // Seed after the previous page's unload hooks, before the script restores.
+    const key = "google-meet-transcript:v1:abc-defg-hij";
+    const overdue = JSON.parse(sessionStorage.getItem(key));
+    overdue.schedule.nextAt = Date.now() - 60_000;
+    overdue.schedule.savedRevision = 0;
+    sessionStorage.setItem(key, JSON.stringify(overdue));
+    localStorage.setItem(key, JSON.stringify(overdue));
+  }
   const blobs = new Map();
   URL.createObjectURL = (blob) => {
     const url = `blob:fixture-${blobs.size}`;

@@ -82,6 +82,7 @@ test("bad recovery data cannot break a new log", () => {
 
 test("automatic backups are due at 30 minutes, skip unchanged data, and catch up once", () => {
   const schedule = new BackupSchedule({}, start);
+  schedule.start(start);
   assert.equal(schedule.due(1, start + BACKUP_INTERVAL - 1), false);
   assert.equal(schedule.due(1, start + BACKUP_INTERVAL), true);
   schedule.markSaved(1, start + BACKUP_INTERVAL);
@@ -98,6 +99,26 @@ test("a manual download resets the backup interval and the schedule survives rel
   const restored = new BackupSchedule(schedule.serialize(), start + 30 * 60_000);
   assert.equal(restored.due(9, start + 31 * 60_000), false);
   assert.equal(restored.due(9, start + 59 * 60_000), true);
+});
+
+test("restoring an overdue backup does not download immediately on entering a room", () => {
+  const restored = new BackupSchedule({ nextAt: start - 1, savedRevision: 3 }, start);
+  assert.equal(restored.due(4, start), false);
+  restored.start(start);
+  assert.equal(restored.due(4, start + BACKUP_INTERVAL - 1), false);
+  assert.equal(restored.due(4, start + BACKUP_INTERVAL), true);
+  assert.equal(restored.savedRevision, 3);
+});
+
+test("waiting in a room before the first caption does not consume the backup interval", () => {
+  const schedule = new BackupSchedule({}, start);
+  const firstCaptionAt = start + 45 * 60_000;
+  assert.equal(schedule.due(1, firstCaptionAt), false);
+  schedule.start(firstCaptionAt);
+  assert.equal(schedule.due(1, firstCaptionAt + BACKUP_INTERVAL - 1), false);
+  assert.equal(schedule.due(1, firstCaptionAt + BACKUP_INTERVAL), true);
+  assert.equal(schedule.start(firstCaptionAt + BACKUP_INTERVAL - 1), false);
+  assert.equal(schedule.due(1, firstCaptionAt + BACKUP_INTERVAL), true);
 });
 
 test("exports preserve multilingual text, speaker aliases, and first-observed times", () => {

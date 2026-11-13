@@ -26,9 +26,11 @@ Then select **File → Save**:
 
 ![Save the userscript from the File menu](assets/tampermonkey-save-script.png)
 
-### Step 3. Enable captions
+### Step 3. Join a meeting
 
-Join a Google Meet meeting and turn on captions. The **Meet transcript** panel starts capturing automatically, including after a page reload; use **Pause** and **Record** to pause or resume.
+Join a Google Meet meeting. The script turns on Meet captions automatically when the caption control becomes available, and the **Meet transcript** panel starts capturing, including after a page reload. Use **Pause** and **Record** to pause or resume; **Record** also turns captions back on if needed. If Meet's caption control is not recognized, turn on captions manually.
+
+Captions that are already enabled stay on. If you turn captions off in Meet after capture starts, the script leaves them off until you choose **Record** again. Pausing capture does not turn off Meet captions.
 
 The panel always starts **collapsed** on each page load and when changing meetings. Click **Meet transcript** to expand or collapse it. The recording status and capture button stay visible: a red dot, **Recording (Japanese)** (or the selected language), and a red **Pause** button indicate active caption capture; **Not recording** appears when paused, finished, or waiting for Meet captions to be enabled.
 
@@ -42,7 +44,7 @@ The script recognizes caption-panel labels in English, Japanese, and Korean. Und
 
 Leave **Auto-download every 30 minutes** enabled. If the browser asks whether Meet may download multiple files, allow it in the site's automatic-download settings.
 
-Captions are collected as they appear, and recovery copies are saved to this tab's session storage and the browser's local storage within about half a second of a change. Every 30 minutes, the script requests a download of the **complete log**, including captions Meet has already removed. Unchanged logs do not create duplicate backups; a manual download restarts the 30-minute interval. If a background timer runs late, one backup is requested when it next runs.
+Captions are collected as they appear, and recovery copies are saved to this tab's session storage and the browser's local storage within about half a second of a change. The 30-minute download timer starts when captions are first captured, so time spent waiting to join or enable captions does not trigger an immediate download. Every 30 minutes, the script requests a download of the **complete log**, including captions Meet has already removed. Unchanged logs do not create duplicate backups; a manual download restarts the 30-minute interval. Reloading preserves a pending future backup, while restoring an overdue backup starts a fresh 30-minute interval when capture resumes. If a background timer runs late during capture, one backup is requested when it next runs.
 
 Choose **Text**, **Markdown**, or **JSON** for both manual and automatic downloads. Check your Downloads folder to confirm the browser allowed the files; the panel reports download requests, not successful disk writes.
 

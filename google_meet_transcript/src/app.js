@@ -1,5 +1,5 @@
 import { Transcript, BackupSchedule, exportTranscript, exportFilename } from "./transcript.js";
-import { captionRegions, captionRows, readCaptionRow } from "./captions.js";
+import { captionRegions, captionRows, readCaptionRow, enableMeetCaptions } from "./captions.js";
 import { RoomRecovery } from "./recovery.js";
 import { clickedLeaveControl, meetingHasEnded, roomFromPath } from "./meeting.js";
 import { makePanelMovable } from "./panel-position.js";
@@ -35,8 +35,9 @@ function startRoom(room) {
   let storageFailed = false;
   let persistentFailed = false;
   let log = new Transcript(room, recovered?.transcript);
-  let schedule = new BackupSchedule(recovered?.schedule);
+  let schedule = new BackupSchedule(log.entries.length ? recovered?.schedule : undefined);
   let capturing = true;
+  let captionsRequested = false;
   let finished = false;
   let knownRows = [];
   let pendingWrite = null;
@@ -173,6 +174,8 @@ function startRoom(room) {
       backupStatus.textContent = "Periodic downloads are off. Local recovery stays on.";
     } else if (!capturing) {
       backupStatus.textContent = "Automatic downloads run while capturing.";
+    } else if (schedule.nextAt === null) {
+      backupStatus.textContent = "The 30-minute backup timer starts with caption capture.";
     } else if (now >= schedule.nextAt && log.revision === schedule.savedRevision) {
       backupStatus.textContent = "No new captions to back up.";
     } else {
@@ -222,6 +225,7 @@ function startRoom(room) {
       const rows = captionRows(regions);
       changed = log.ingest(rows) || changed;
       knownRows = rows;
+      if (log.entries.length) changed = schedule.start() || changed;
     }
     if (changed) queueRecovery();
     render();
@@ -253,10 +257,13 @@ function startRoom(room) {
   });
   toggle.addEventListener("click", () => {
     if (capturing) scan();
-    if (!capturing && !log.entries.length) schedule = new BackupSchedule();
+    if (!capturing) {
+      schedule = new BackupSchedule(log.entries.length ? schedule.serialize() : undefined);
+      captionsRequested = false;
+    }
     capturing = !capturing;
     finished = false;
-    if (capturing) scan();
+    if (capturing) refresh();
     writeRecovery();
   });
   download.addEventListener("click", () => saveDownload());
@@ -264,6 +271,7 @@ function startRoom(room) {
   reset.addEventListener("click", () => {
     if (!window.confirm("Start a new log? This removes the current log from this tab. Download it first if you need it.")) return;
     capturing = false;
+    captionsRequested = false;
     finished = false;
     recoveryNotice.hidden = true;
     knownRows = [];
@@ -282,8 +290,9 @@ function startRoom(room) {
 
   function refresh() {
     if (roomFromPath(location.pathname) !== room) return;
-    scan();
     const ended = meetingHasEnded(document);
+    if (!ended && capturing && !finished && !captionsRequested) captionsRequested = enableMeetCaptions(document);
+    scan();
     if (ended && !finished) {
       finishDownload();
       finished = true;
@@ -291,6 +300,8 @@ function startRoom(room) {
     } else if (!ended && finished && captionRegions(document).length) {
       finished = false;
       capturing = true;
+      captionsRequested = false;
+      schedule = new BackupSchedule(schedule.serialize());
       scan();
     }
     render();
