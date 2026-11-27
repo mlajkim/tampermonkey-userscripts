@@ -28,9 +28,9 @@ Then select **File → Save**:
 
 ### Step 3. Join a meeting
 
-Join a Google Meet meeting. The script turns on Meet captions automatically when the caption control becomes available, and the **Meet transcript** panel starts capturing, including after a page reload. Use **Pause** and **Record** to pause or resume; **Record** also turns captions back on if needed. If Meet's caption control is not recognized, turn on captions manually.
+Join a Google Meet meeting. The script turns on Meet captions automatically when the caption control becomes available, and the **Meet transcript** panel starts capturing, including after a page reload. **Start** clicks Meet's caption control to turn captions on; **Pause** clicks it to turn captions off. If Meet's caption control is not recognized, use Meet's own caption button.
 
-Captions that are already enabled stay on. If you turn captions off in Meet after capture starts, the script leaves them off until you choose **Record** again. Pausing capture does not turn off Meet captions.
+Meet's caption ON/OFF state controls both the panel and caption collection. Changing captions with Meet's own button or keyboard shortcut also updates **Start**/**Pause** and the recording status. Captions that are already enabled stay on; turning them off leaves them off until you choose **Start** or enable them in Meet. While Meet processes a click, the panel waits for the actual state change before updating and temporarily disables its button to prevent duplicate clicks. If the native control is unavailable, the panel button is disabled.
 
 The panel always starts **collapsed** on each page load and when changing meetings. Click **Meet transcript** to expand or collapse it. The recording status and capture button stay visible: a red dot, **Recording (Japanese)** (or the selected language), and a red **Pause** button indicate active caption capture; **Not recording** appears when paused, finished, or waiting for Meet captions to be enabled.
 
@@ -54,7 +54,7 @@ Choose **Text**, **Markdown**, or **JSON** for both manual and automatic downloa
 
 Closing or navigating away from the tab also attempts this download, but browsers can block downloads during page teardown or skip those events entirely. **A tab-close download cannot be guaranteed.** Allow automatic downloads in the browser, or click **Download full log** before closing when you need to confirm it was saved.
 
-If the tab closes without a file, reopen the same meeting in the same browser profile: the last local recovery copy is restored automatically. **New log** clears this room's recovery copy after confirmation, so download anything you need first.
+If the tab closes without a file, reopen the same meeting in the same browser profile: the last local recovery copy is restored automatically. **New log** starts a fresh log after confirmation and keeps Meet's caption state unchanged, so download anything you need first. If captions are on, collection continues into the new log.
 
 ## Limits
 

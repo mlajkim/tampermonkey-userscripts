@@ -36,6 +36,10 @@
   if (!firstVisit) captionToggle.setAttribute("aria-label", "Turn off captions (c)");
   captionToggle.addEventListener("click", () => {
     window.testState.captionClicks += 1;
+    if (window.testState.ignoreNextCaptionClick) {
+      window.testState.ignoreNextCaptionClick = false;
+      return;
+    }
     // Meet can update its toolbar and caption panel asynchronously.
     setTimeout(() => {
       const region = document.getElementById("captions");

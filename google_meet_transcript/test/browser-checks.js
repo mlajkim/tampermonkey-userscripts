@@ -92,6 +92,11 @@ try {
     languageButton.remove();
     await until(() => control("recording-label").textContent === "Recording", "language no longer observable");
     check(control("recording-label").textContent === "Recording", "An unavailable language falls back to Recording without claiming a stale language");
+    const clicksBeforeReset = window.testState.captionClicks;
+    control("reset").click();
+    check(control("capture").textContent === "Pause" && control("recording-label").textContent === "Recording" &&
+      window.testState.captionClicks === clicksBeforeReset,
+      "Starting a new log keeps collecting according to Meet's unchanged caption state");
     finish();
   } else if (phase === "reload") {
     check(meetLanguage().value === "en-US" && control("recording-label").textContent === "Recording (English (United States))",
@@ -126,6 +131,7 @@ try {
   } else {
     const captionToggle = document.getElementById("meet-captions-toggle");
     check(control("recording-label").textContent === "Not recording", "Capture waits for Meet's caption controls to be available");
+    check(control("capture").disabled && control("capture").textContent === "Start", "Start is unavailable until Meet exposes a usable caption control");
     window.testState.offset += 31 * 60_000;
     await wait(1100);
     check(window.testState.downloads.length === 0 && window.testState.captionClicks === 0,
@@ -135,6 +141,9 @@ try {
     await wait(1100);
     check(window.testState.captionClicks === 0, "Unavailable caption controls are not clicked");
     captionToggle.disabled = false;
+    await wait(30);
+    check(window.testState.captionClicks === 1 && control("capture").disabled && control("recording-label").textContent === "Not recording",
+      "Automatic startup waits for Meet to actually enable captions");
     await until(() => control("recording-label").textContent.startsWith("Recording"), "captions enabled automatically");
     check(window.testState.captionClicks === 1 && window.testState.downloads.length === 0,
       "The script turns on Meet captions once without downloading on entry");
@@ -231,9 +240,15 @@ try {
     await wait(1100);
     check(window.testState.downloads.length === downloadsBefore + 1, "A late timer catches up once instead of creating a burst of downloads");
 
+    const clicksBeforePause = window.testState.captionClicks;
     control("capture").click();
-    check(control("recording-label").textContent === "Not recording", "Pausing removes the Recording (language) status");
-    region.hidden = true;
+    check(window.testState.captionClicks === clicksBeforePause + 1 && control("capture").disabled &&
+      control("recording-label").textContent === "Recording (Japanese)",
+      "Pause clicks Meet's actual caption button and waits for its asynchronous state change");
+    control("capture").click();
+    check(window.testState.captionClicks === clicksBeforePause + 1, "Repeated clicks while Meet is updating do not toggle captions twice");
+    await until(() => control("capture").textContent === "Start", "Meet captions turned off by Pause");
+    check(region.hidden && control("recording-label").textContent === "Not recording", "Pause turns off Meet captions and updates the panel to Start");
     captionToggle.setAttribute("aria-label", "字幕をオンにする（c）");
     const paused = makeCaption("Alex", "This happened while paused");
     wrapper.append(paused);
@@ -241,19 +256,90 @@ try {
     paused.remove();
     await wait();
     control("capture").click();
-    await until(() => !region.hidden, "Record enables Japanese caption control");
-    check(window.testState.captionClicks === 2, "Record enables captions again using the Japanese Meet control");
+    check(control("capture").textContent === "Start" && control("capture").disabled && control("recording-label").textContent === "Not recording",
+      "Start does not claim recording before Meet enables captions");
+    await until(() => !region.hidden, "Start enables Japanese caption control");
+    check(window.testState.captionClicks === clicksBeforePause + 2 && control("capture").textContent === "Pause",
+      "Start enables captions again using the Japanese Meet control");
     control("download").click();
     check(!(await latestText()).includes("This happened while paused"), "Pause stops collecting caption changes");
 
     region.hidden = true;
     captionToggle.setAttribute("aria-label", "자막 사용 설정(c)");
     await wait(1100);
-    check(window.testState.captionClicks === 2, "Turning captions off in Meet is respected until Record is requested again");
+    check(window.testState.captionClicks === clicksBeforePause + 2 && control("capture").textContent === "Start" &&
+      control("status").textContent.startsWith("Paused"), "Turning captions off in Meet updates the panel to Start without re-enabling them");
     control("capture").click();
+    await until(() => !region.hidden, "Start enables Korean caption control");
+    check(window.testState.captionClicks === clicksBeforePause + 3, "One Start click enables captions using the Korean Meet control");
+
+    let captionClicks = window.testState.captionClicks;
+    captionToggle.click();
+    await until(() => control("capture").textContent === "Start", "native caption OFF reflected in panel");
+    window.testState.offset += 31 * 60_000;
+    downloadsBefore = window.testState.downloads.length;
+    await wait(1100);
+    check(region.hidden && window.testState.captionClicks === captionClicks + 1 && window.testState.downloads.length === downloadsBefore,
+      "Turning captions off with Meet's own button keeps them off and suspends periodic downloads");
+    captionToggle.click();
+    await until(() => control("capture").textContent === "Pause", "native caption ON reflected in panel");
+    check(control("recording-label").textContent === "Recording (Japanese)" && window.testState.captionClicks === captionClicks + 2,
+      "Turning captions on in Meet resumes recording without a panel click");
+    await wait(1100);
+    check(window.testState.downloads.length === downloadsBefore && saved().schedule.nextAt > Date.now() + 29 * 60_000,
+      "Resuming native captions after an overdue backup starts a fresh interval without downloading immediately");
+
+    captionToggle.setAttribute("aria-label", "Captions");
+    captionToggle.setAttribute("aria-pressed", "false");
+    await until(() => control("capture").textContent === "Start", "native aria-pressed OFF overrides stale caption panel");
+    const stale = makeCaption("Alex", "Do not capture while Meet captions are off");
+    wrapper.append(stale);
+    await wait();
+    control("download").click();
+    check(!(await latestText()).includes("Do not capture while"), "Meet's OFF state stops collection even if its old caption panel is still visible");
+    stale.remove();
+    captionToggle.setAttribute("aria-pressed", "true");
+    region.hidden = true;
+    await until(() => control("capture").textContent === "Pause", "native aria-pressed ON before panel appears");
+    check(control("recording-label").textContent === "Not recording", "The button follows native ON while recording waits for a caption panel");
+    region.hidden = false;
+    await until(() => control("recording-label").textContent.startsWith("Recording"), "caption panel catches up");
+    captionToggle.removeAttribute("aria-pressed");
+    captionToggle.setAttribute("aria-label", "Turn off captions (c)");
+
+    captionClicks = window.testState.captionClicks;
+    captionToggle.disabled = true;
+    await until(() => control("capture").disabled, "disabled native caption control");
     control("capture").click();
-    await until(() => !region.hidden, "Record enables Korean caption control");
-    check(window.testState.captionClicks === 3, "Record enables captions using the Korean Meet control");
+    check(window.testState.captionClicks === captionClicks && control("capture").textContent === "Pause",
+      "A disabled native control disables the panel button without changing its observed ON state");
+    captionToggle.disabled = false;
+    captionToggle.setAttribute("aria-disabled", "true");
+    await wait();
+    check(control("capture").disabled, "An aria-disabled native control also disables the panel button");
+    captionToggle.removeAttribute("aria-disabled");
+    captionToggle.hidden = true;
+    await wait();
+    check(control("capture").disabled && control("recording-label").textContent.startsWith("Recording"),
+      "With a hidden native control, visible captions remain collectable but cannot be toggled from the panel");
+    captionToggle.hidden = false;
+    captionToggle.setAttribute("aria-label", "Caption language");
+    await wait();
+    check(control("capture").disabled && window.testState.captionClicks === captionClicks,
+      "A caption-language control is never treated as the caption ON/OFF button");
+    captionToggle.setAttribute("aria-label", "字幕をオフにする（c）");
+    await until(() => !control("capture").disabled, "Japanese caption OFF action recognized");
+    control("capture").click();
+    await until(() => control("capture").textContent === "Start", "Japanese Pause disables native captions");
+    window.testState.ignoreNextCaptionClick = true;
+    control("capture").click();
+    check(control("capture").textContent === "Start" && control("recording-label").textContent === "Not recording",
+      "A rejected native caption click never changes the panel to recording");
+    await wait(1100);
+    await until(() => !control("capture").disabled, "ignored caption click times out");
+    check(region.hidden && control("capture").textContent === "Start", "After a rejected click the panel stays OFF and allows an explicit retry");
+    control("capture").click();
+    await until(() => control("recording-label").textContent.startsWith("Recording"), "retry starts native captions");
 
     control("format").value = "md";
     wrapper.append(makeCaption("Sam", "<script>alert(1)</script> **literal**"));
