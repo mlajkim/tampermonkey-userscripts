@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Meet Transcript
 // @namespace    https://github.com/mlajkim/tampermonkey-userscripts
-// @version      0.2.5
+// @version      0.2.6
 // @description  Automatically capture captions, back up every 30 minutes, and download on leaving.
 // @author       mlajkim
 // @match        https://meet.google.com/*
@@ -137,12 +137,20 @@ class Transcript {
 
 class BackupSchedule {
   constructor(saved = {}, now = Date.now()) {
-    this.nextAt = Number.isFinite(saved?.nextAt) ? saved.nextAt : now + BACKUP_INTERVAL;
+    // An overdue recovery copy belongs to an earlier capture session. Wait
+    // for captions before starting a fresh interval instead of downloading it.
+    this.nextAt = Number.isFinite(saved?.nextAt) && saved.nextAt > now ? saved.nextAt : null;
     this.savedRevision = Number.isSafeInteger(saved?.savedRevision) ? saved.savedRevision : 0;
   }
 
+  start(now = Date.now()) {
+    if (this.nextAt !== null) return false;
+    this.nextAt = now + BACKUP_INTERVAL;
+    return true;
+  }
+
   due(revision, now = Date.now()) {
-    return now >= this.nextAt && revision !== this.savedRevision;
+    return this.nextAt !== null && now >= this.nextAt && revision !== this.savedRevision;
   }
 
   markSaved(revision, now = Date.now()) {
@@ -195,6 +203,8 @@ function exportFilename(room, format, now = Date.now(), final = false) {
 // src/captions.js
 
 const CAPTION_LABEL = /\b(?:captions?|subtitles?|transcripts?)\b|字幕|文字起こし|자막|스크립트/iu;
+const ENABLE_CAPTIONS = /^(?:turn on captions|字幕をオンにする|자막 (?:사용|사용 설정|켜기))$/iu;
+const DISABLE_CAPTIONS = /^(?:turn off captions|字幕をオフにする|자막 (?:사용 안함|사용 중지|끄기))$/iu;
 
 function textOf(element) {
   return cleanText(element?.innerText ?? element?.textContent ?? "");
@@ -211,6 +221,22 @@ function captionRegions(document) {
   return [...document.querySelectorAll('[role="region"][aria-label], [role="log"][aria-label]')]
     .filter((element) => CAPTION_LABEL.test(element.getAttribute("aria-label")) && !hidden(element))
     .filter((element, _, regions) => !regions.some((parent) => parent !== element && parent.contains(element)));
+}
+
+// Only click an explicit "turn on" action. Language controls, hidden menus,
+// and an already-enabled caption toggle must never be changed.
+function enableMeetCaptions(document) {
+  if (captionRegions(document).length) return true;
+  for (const control of document.querySelectorAll('button, [role="button"]')) {
+    if (hidden(control) || control.disabled || control.getAttribute("aria-disabled") === "true") continue;
+    const label = cleanText(control.getAttribute("aria-label") || control.getAttribute("title") || textOf(control))
+      .replace(/\s*[（(][^()（）]*[）)]\s*$/u, "");
+    if (DISABLE_CAPTIONS.test(label)) return true;
+    if (!ENABLE_CAPTIONS.test(label)) continue;
+    if (control.getAttribute("aria-pressed") !== "true" && control.getAttribute("aria-checked") !== "true") control.click();
+    return true;
+  }
+  return false;
 }
 
 function readCaptionRow(element) {
@@ -509,8 +535,9 @@ function startRoom(room) {
   let storageFailed = false;
   let persistentFailed = false;
   let log = new Transcript(room, recovered?.transcript);
-  let schedule = new BackupSchedule(recovered?.schedule);
+  let schedule = new BackupSchedule(log.entries.length ? recovered?.schedule : undefined);
   let capturing = true;
+  let captionsRequested = false;
   let finished = false;
   let knownRows = [];
   let pendingWrite = null;
@@ -647,6 +674,8 @@ function startRoom(room) {
       backupStatus.textContent = "Periodic downloads are off. Local recovery stays on.";
     } else if (!capturing) {
       backupStatus.textContent = "Automatic downloads run while capturing.";
+    } else if (schedule.nextAt === null) {
+      backupStatus.textContent = "The 30-minute backup timer starts with caption capture.";
     } else if (now >= schedule.nextAt && log.revision === schedule.savedRevision) {
       backupStatus.textContent = "No new captions to back up.";
     } else {
@@ -696,6 +725,7 @@ function startRoom(room) {
       const rows = captionRows(regions);
       changed = log.ingest(rows) || changed;
       knownRows = rows;
+      if (log.entries.length) changed = schedule.start() || changed;
     }
     if (changed) queueRecovery();
     render();
@@ -727,10 +757,13 @@ function startRoom(room) {
   });
   toggle.addEventListener("click", () => {
     if (capturing) scan();
-    if (!capturing && !log.entries.length) schedule = new BackupSchedule();
+    if (!capturing) {
+      schedule = new BackupSchedule(log.entries.length ? schedule.serialize() : undefined);
+      captionsRequested = false;
+    }
     capturing = !capturing;
     finished = false;
-    if (capturing) scan();
+    if (capturing) refresh();
     writeRecovery();
   });
   download.addEventListener("click", () => saveDownload());
@@ -738,6 +771,7 @@ function startRoom(room) {
   reset.addEventListener("click", () => {
     if (!window.confirm("Start a new log? This removes the current log from this tab. Download it first if you need it.")) return;
     capturing = false;
+    captionsRequested = false;
     finished = false;
     recoveryNotice.hidden = true;
     knownRows = [];
@@ -756,8 +790,9 @@ function startRoom(room) {
 
   function refresh() {
     if (roomFromPath(location.pathname) !== room) return;
-    scan();
     const ended = meetingHasEnded(document);
+    if (!ended && capturing && !finished && !captionsRequested) captionsRequested = enableMeetCaptions(document);
+    scan();
     if (ended && !finished) {
       finishDownload();
       finished = true;
@@ -765,6 +800,8 @@ function startRoom(room) {
     } else if (!ended && finished && captionRegions(document).length) {
       finished = false;
       capturing = true;
+      captionsRequested = false;
+      schedule = new BackupSchedule(schedule.serialize());
       scan();
     }
     render();

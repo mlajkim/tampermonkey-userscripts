@@ -120,12 +120,20 @@ export class Transcript {
 
 export class BackupSchedule {
   constructor(saved = {}, now = Date.now()) {
-    this.nextAt = Number.isFinite(saved?.nextAt) ? saved.nextAt : now + BACKUP_INTERVAL;
+    // An overdue recovery copy belongs to an earlier capture session. Wait
+    // for captions before starting a fresh interval instead of downloading it.
+    this.nextAt = Number.isFinite(saved?.nextAt) && saved.nextAt > now ? saved.nextAt : null;
     this.savedRevision = Number.isSafeInteger(saved?.savedRevision) ? saved.savedRevision : 0;
   }
 
+  start(now = Date.now()) {
+    if (this.nextAt !== null) return false;
+    this.nextAt = now + BACKUP_INTERVAL;
+    return true;
+  }
+
   due(revision, now = Date.now()) {
-    return now >= this.nextAt && revision !== this.savedRevision;
+    return this.nextAt !== null && now >= this.nextAt && revision !== this.savedRevision;
   }
 
   markSaved(revision, now = Date.now()) {

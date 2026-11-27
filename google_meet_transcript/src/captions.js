@@ -1,6 +1,8 @@
 import { cleanText } from "./transcript.js";
 
 const CAPTION_LABEL = /\b(?:captions?|subtitles?|transcripts?)\b|字幕|文字起こし|자막|스크립트/iu;
+const ENABLE_CAPTIONS = /^(?:turn on captions|字幕をオンにする|자막 (?:사용|사용 설정|켜기))$/iu;
+const DISABLE_CAPTIONS = /^(?:turn off captions|字幕をオフにする|자막 (?:사용 안함|사용 중지|끄기))$/iu;
 
 function textOf(element) {
   return cleanText(element?.innerText ?? element?.textContent ?? "");
@@ -17,6 +19,22 @@ export function captionRegions(document) {
   return [...document.querySelectorAll('[role="region"][aria-label], [role="log"][aria-label]')]
     .filter((element) => CAPTION_LABEL.test(element.getAttribute("aria-label")) && !hidden(element))
     .filter((element, _, regions) => !regions.some((parent) => parent !== element && parent.contains(element)));
+}
+
+// Only click an explicit "turn on" action. Language controls, hidden menus,
+// and an already-enabled caption toggle must never be changed.
+export function enableMeetCaptions(document) {
+  if (captionRegions(document).length) return true;
+  for (const control of document.querySelectorAll('button, [role="button"]')) {
+    if (hidden(control) || control.disabled || control.getAttribute("aria-disabled") === "true") continue;
+    const label = cleanText(control.getAttribute("aria-label") || control.getAttribute("title") || textOf(control))
+      .replace(/\s*[（(][^()（）]*[）)]\s*$/u, "");
+    if (DISABLE_CAPTIONS.test(label)) return true;
+    if (!ENABLE_CAPTIONS.test(label)) continue;
+    if (control.getAttribute("aria-pressed") !== "true" && control.getAttribute("aria-checked") !== "true") control.click();
+    return true;
+  }
+  return false;
 }
 
 export function readCaptionRow(element) {
