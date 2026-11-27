@@ -1,5 +1,5 @@
 import { Transcript, BackupSchedule, exportTranscript, exportFilename } from "./transcript.js";
-import { captionRegions, captionRows, readCaptionRow, enableMeetCaptions } from "./captions.js";
+import { captionRegions, captionRows, readCaptionRow, readMeetCaptions, setMeetCaptions } from "./captions.js";
 import { RoomRecovery } from "./recovery.js";
 import { clickedLeaveControl, meetingHasEnded, roomFromPath } from "./meeting.js";
 import { makePanelMovable } from "./panel-position.js";
@@ -36,8 +36,9 @@ function startRoom(room) {
   let persistentFailed = false;
   let log = new Transcript(room, recovered?.transcript);
   let schedule = new BackupSchedule(log.entries.length ? recovered?.schedule : undefined);
-  let capturing = true;
+  let wasCapturing = false;
   let captionsRequested = false;
+  let pendingCaptionChange = null;
   let finished = false;
   let knownRows = [];
   let pendingWrite = null;
@@ -102,7 +103,7 @@ function startRoom(room) {
   const recordingLabel = element("span", { id: "recording-label" });
   recordingStatus.append(element("span", { class: "recording-dot", "aria-hidden": "true" }), recordingLabel);
   heading.append(disclosure, recordingStatus);
-  const toggle = element("button", { id: "capture", type: "button", class: "capture" }, "Record");
+  const toggle = element("button", { id: "capture", type: "button", class: "capture" }, "Start");
   header.append(move, heading, toggle);
   const body = element("div", { id: "panel-body", class: "body", hidden: "" });
   const status = element("p", { id: "status", role: "status", "aria-live": "polite" });
@@ -146,8 +147,14 @@ function startRoom(room) {
   const placement = makePanelMovable(host, move);
   resetPosition.addEventListener("click", () => placement.reset());
 
+  function isCapturing() {
+    return !finished && readMeetCaptions(document).enabled === true;
+  }
+
   function render(now = Date.now()) {
-    const recording = capturing && !finished && regionFound;
+    const captions = readMeetCaptions(document);
+    const capturing = !finished && captions.enabled === true;
+    const recording = capturing && regionFound;
     const language = recording ? readCaptionLanguage(document) : null;
     const nextRecordingLabel = recording ? (language ? `Recording (${language})` : "Recording") : "Not recording";
     if (recordingLabel.textContent !== nextRecordingLabel) {
@@ -155,19 +162,25 @@ function startRoom(room) {
       placement.refresh();
     }
     recordingStatus.classList.toggle("recording", recording);
-    recordingStatus.title = finished ? "Meeting ended" : !capturing ? "Capture is paused" :
-      !regionFound ? "Turn on Meet captions to start recording" : "Collecting Meet captions";
-    const nextStatus = `${finished ? "Finished" : capturing ? "Capturing" : "Paused"} · ${log.entries.length} captions`;
+    recordingStatus.title = finished ? "Meeting ended" : captions.enabled === null ? "Waiting for Meet captions" :
+      !capturing ? "Meet captions are off" : !regionFound ? "Waiting for Meet’s caption panel" : "Collecting Meet captions";
+    const nextStatus = `${finished ? "Finished" : capturing ? "Capturing" : captions.enabled === false ? "Paused" : "Waiting"} · ${log.entries.length} captions`;
     if (status.textContent !== nextStatus) status.textContent = nextStatus;
-    toggle.textContent = capturing ? "Pause" : "Record";
+    toggle.textContent = capturing ? "Pause" : "Start";
     toggle.classList.toggle("recording", recording);
-    toggle.title = capturing ? "Pause caption recording" : log.entries.length ? "Resume caption recording" : "Start caption recording";
+    toggle.disabled = finished || !captions.available || pendingCaptionChange !== null;
+    toggle.title = finished ? "Meeting ended" : pendingCaptionChange ? "Waiting for Meet to update captions" :
+      !captions.available ? "Meet’s caption control is unavailable. Use Meet to change captions." :
+        capturing ? "Turn off Meet captions" : "Turn on Meet captions";
     toggle.setAttribute("aria-label", toggle.title);
+    toggle.setAttribute("aria-pressed", String(capturing));
+    toggle.setAttribute("aria-busy", String(pendingCaptionChange !== null));
     download.disabled = !log.entries.length;
     reset.disabled = !log.entries.length;
     hint.textContent = finished ? "Meeting ended. Your full log is available to download." :
-      !capturing ? "Capture is paused. Resume when you are ready." :
-      !regionFound ? "Waiting for Meet’s caption panel. Turn on captions." :
+      captions.enabled === null ? "Waiting for Meet’s caption controls. You can turn on captions in Meet." :
+      !capturing ? "Meet captions are off. Use Start or Meet’s caption button to resume." :
+      !regionFound ? "Meet captions are on. Waiting for the caption panel." :
         !log.entries.length ? "Caption panel found. Waiting for speech." :
           "Keeping captions as they appear, including older entries.";
     if (!automatic.checked) {
@@ -211,7 +224,12 @@ function startRoom(room) {
   }
 
   function scan() {
-    if (!capturing || roomFromPath(location.pathname) !== room) return;
+    if (roomFromPath(location.pathname) !== room) return;
+    const capturing = isCapturing();
+    if (capturing && !wasCapturing) {
+      schedule = new BackupSchedule(log.entries.length ? schedule.serialize() : undefined);
+    }
+    wasCapturing = capturing;
     const regions = captionRegions(document);
     regionFound = regions.length > 0;
     let changed = false;
@@ -221,11 +239,13 @@ function startRoom(room) {
         if (finalRow) changed = log.updateDetached(finalRow) || changed;
       }
     }
-    if (regionFound) {
+    if (capturing && regionFound) {
       const rows = captionRows(regions);
       changed = log.ingest(rows) || changed;
       knownRows = rows;
       if (log.entries.length) changed = schedule.start() || changed;
+    } else {
+      knownRows = [];
     }
     if (changed) queueRecovery();
     render();
@@ -256,29 +276,26 @@ function startRoom(room) {
     placement.refresh();
   });
   toggle.addEventListener("click", () => {
-    if (capturing) scan();
-    if (!capturing) {
-      schedule = new BackupSchedule(log.entries.length ? schedule.serialize() : undefined);
-      captionsRequested = false;
-    }
-    capturing = !capturing;
-    finished = false;
-    if (capturing) refresh();
+    const captions = readMeetCaptions(document);
+    if (finished || !captions.available || pendingCaptionChange) return;
+    scan();
+    captionsRequested = true;
+    pendingCaptionChange = { enabled: !captions.enabled, requestedAt: Date.now() };
+    if (!setMeetCaptions(document, pendingCaptionChange.enabled)) pendingCaptionChange = null;
+    refresh();
     writeRecovery();
   });
   download.addEventListener("click", () => saveDownload());
   for (const input of [format, ownName, automatic, autoFinish]) input.addEventListener("change", writeRecovery);
   reset.addEventListener("click", () => {
     if (!window.confirm("Start a new log? This removes the current log from this tab. Download it first if you need it.")) return;
-    capturing = false;
-    captionsRequested = false;
-    finished = false;
     recoveryNotice.hidden = true;
     knownRows = [];
     log = new Transcript(room);
     schedule = new BackupSchedule();
     latestBackup = 0;
     exportError = "";
+    scan();
     writeRecovery();
   });
 
@@ -291,19 +308,26 @@ function startRoom(room) {
   function refresh() {
     if (roomFromPath(location.pathname) !== room) return;
     const ended = meetingHasEnded(document);
-    if (!ended && capturing && !finished && !captionsRequested) captionsRequested = enableMeetCaptions(document);
-    scan();
     if (ended && !finished) {
       finishDownload();
       finished = true;
-      capturing = false;
-    } else if (!ended && finished && captionRegions(document).length) {
+      pendingCaptionChange = null;
+    } else if (!ended && finished && readMeetCaptions(document).enabled !== null) {
       finished = false;
-      capturing = true;
       captionsRequested = false;
-      schedule = new BackupSchedule(schedule.serialize());
-      scan();
     }
+    if (!ended && !finished && !captionsRequested) {
+      const captions = readMeetCaptions(document);
+      if (captions.enabled === true) captionsRequested = true;
+      else if (captions.available) {
+        captionsRequested = true;
+        pendingCaptionChange = { enabled: true, requestedAt: Date.now() };
+        if (!setMeetCaptions(document, true)) pendingCaptionChange = null;
+      }
+    }
+    if (pendingCaptionChange && (readMeetCaptions(document).enabled === pendingCaptionChange.enabled ||
+        Date.now() - pendingCaptionChange.requestedAt >= 3000)) pendingCaptionChange = null;
+    scan();
     render();
   }
 
@@ -322,11 +346,11 @@ function startRoom(room) {
     characterData: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ["aria-label", "aria-labelledby", "aria-hidden", "hidden", "aria-valuetext", "aria-selected", "aria-checked", "aria-expanded"],
+    attributeFilter: ["aria-label", "aria-labelledby", "aria-hidden", "hidden", "aria-valuetext", "aria-selected", "aria-checked", "aria-pressed", "aria-disabled", "disabled", "aria-expanded"],
   });
   const timer = setInterval(() => {
     refresh();
-    if (capturing && automatic.checked && log.entries.length && schedule.due(log.revision)) saveDownload();
+    if (isCapturing() && automatic.checked && log.entries.length && schedule.due(log.revision)) saveDownload();
     render();
   }, 1000);
   const leaving = () => { scan(); writeRecovery(); };

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Meet Transcript
 // @namespace    https://github.com/mlajkim/tampermonkey-userscripts
-// @version      0.2.6
+// @version      0.2.7
 // @description  Automatically capture captions, back up every 30 minutes, and download on leaving.
 // @author       mlajkim
 // @match        https://meet.google.com/*
@@ -205,6 +205,7 @@ function exportFilename(room, format, now = Date.now(), final = false) {
 const CAPTION_LABEL = /\b(?:captions?|subtitles?|transcripts?)\b|字幕|文字起こし|자막|스크립트/iu;
 const ENABLE_CAPTIONS = /^(?:turn on captions|字幕をオンにする|자막 (?:사용|사용 설정|켜기))$/iu;
 const DISABLE_CAPTIONS = /^(?:turn off captions|字幕をオフにする|자막 (?:사용 안함|사용 중지|끄기))$/iu;
+const CAPTION_TOGGLE = /^(?:captions|字幕|자막)$/iu;
 
 function textOf(element) {
   return cleanText(element?.innerText ?? element?.textContent ?? "");
@@ -223,20 +224,31 @@ function captionRegions(document) {
     .filter((element, _, regions) => !regions.some((parent) => parent !== element && parent.contains(element)));
 }
 
-// Only click an explicit "turn on" action. Language controls, hidden menus,
-// and an already-enabled caption toggle must never be changed.
-function enableMeetCaptions(document) {
-  if (captionRegions(document).length) return true;
+// Meet's toolbar is authoritative even while its caption panel is catching up.
+// A visible panel is a read-only fallback when the toolbar is not recognized.
+function readMeetCaptions(document) {
   for (const control of document.querySelectorAll('button, [role="button"]')) {
-    if (hidden(control) || control.disabled || control.getAttribute("aria-disabled") === "true") continue;
+    if (hidden(control)) continue;
     const label = cleanText(control.getAttribute("aria-label") || control.getAttribute("title") || textOf(control))
       .replace(/\s*[（(][^()（）]*[）)]\s*$/u, "");
-    if (DISABLE_CAPTIONS.test(label)) return true;
-    if (!ENABLE_CAPTIONS.test(label)) continue;
-    if (control.getAttribute("aria-pressed") !== "true" && control.getAttribute("aria-checked") !== "true") control.click();
-    return true;
+    const onAction = ENABLE_CAPTIONS.test(label);
+    const offAction = DISABLE_CAPTIONS.test(label);
+    if (!onAction && !offAction && !CAPTION_TOGGLE.test(label)) continue;
+    const pressed = control.getAttribute("aria-pressed") ?? control.getAttribute("aria-checked");
+    const enabled = pressed === "true" ? true : pressed === "false" ? false : offAction ? true : onAction ? false : null;
+    if (enabled === null) continue;
+    return { enabled, control, available: !control.disabled && control.getAttribute("aria-disabled") !== "true" };
   }
-  return false;
+  return { enabled: captionRegions(document).length ? true : null, control: null, available: false };
+}
+
+// Request a change through Meet, without predicting whether the click worked.
+function setMeetCaptions(document, enabled) {
+  const current = readMeetCaptions(document);
+  if (current.enabled === enabled) return true;
+  if (!current.available) return false;
+  current.control.click();
+  return true;
 }
 
 function readCaptionRow(element) {
@@ -536,8 +548,9 @@ function startRoom(room) {
   let persistentFailed = false;
   let log = new Transcript(room, recovered?.transcript);
   let schedule = new BackupSchedule(log.entries.length ? recovered?.schedule : undefined);
-  let capturing = true;
+  let wasCapturing = false;
   let captionsRequested = false;
+  let pendingCaptionChange = null;
   let finished = false;
   let knownRows = [];
   let pendingWrite = null;
@@ -602,7 +615,7 @@ function startRoom(room) {
   const recordingLabel = element("span", { id: "recording-label" });
   recordingStatus.append(element("span", { class: "recording-dot", "aria-hidden": "true" }), recordingLabel);
   heading.append(disclosure, recordingStatus);
-  const toggle = element("button", { id: "capture", type: "button", class: "capture" }, "Record");
+  const toggle = element("button", { id: "capture", type: "button", class: "capture" }, "Start");
   header.append(move, heading, toggle);
   const body = element("div", { id: "panel-body", class: "body", hidden: "" });
   const status = element("p", { id: "status", role: "status", "aria-live": "polite" });
@@ -646,8 +659,14 @@ function startRoom(room) {
   const placement = makePanelMovable(host, move);
   resetPosition.addEventListener("click", () => placement.reset());
 
+  function isCapturing() {
+    return !finished && readMeetCaptions(document).enabled === true;
+  }
+
   function render(now = Date.now()) {
-    const recording = capturing && !finished && regionFound;
+    const captions = readMeetCaptions(document);
+    const capturing = !finished && captions.enabled === true;
+    const recording = capturing && regionFound;
     const language = recording ? readCaptionLanguage(document) : null;
     const nextRecordingLabel = recording ? (language ? `Recording (${language})` : "Recording") : "Not recording";
     if (recordingLabel.textContent !== nextRecordingLabel) {
@@ -655,19 +674,25 @@ function startRoom(room) {
       placement.refresh();
     }
     recordingStatus.classList.toggle("recording", recording);
-    recordingStatus.title = finished ? "Meeting ended" : !capturing ? "Capture is paused" :
-      !regionFound ? "Turn on Meet captions to start recording" : "Collecting Meet captions";
-    const nextStatus = `${finished ? "Finished" : capturing ? "Capturing" : "Paused"} · ${log.entries.length} captions`;
+    recordingStatus.title = finished ? "Meeting ended" : captions.enabled === null ? "Waiting for Meet captions" :
+      !capturing ? "Meet captions are off" : !regionFound ? "Waiting for Meet’s caption panel" : "Collecting Meet captions";
+    const nextStatus = `${finished ? "Finished" : capturing ? "Capturing" : captions.enabled === false ? "Paused" : "Waiting"} · ${log.entries.length} captions`;
     if (status.textContent !== nextStatus) status.textContent = nextStatus;
-    toggle.textContent = capturing ? "Pause" : "Record";
+    toggle.textContent = capturing ? "Pause" : "Start";
     toggle.classList.toggle("recording", recording);
-    toggle.title = capturing ? "Pause caption recording" : log.entries.length ? "Resume caption recording" : "Start caption recording";
+    toggle.disabled = finished || !captions.available || pendingCaptionChange !== null;
+    toggle.title = finished ? "Meeting ended" : pendingCaptionChange ? "Waiting for Meet to update captions" :
+      !captions.available ? "Meet’s caption control is unavailable. Use Meet to change captions." :
+        capturing ? "Turn off Meet captions" : "Turn on Meet captions";
     toggle.setAttribute("aria-label", toggle.title);
+    toggle.setAttribute("aria-pressed", String(capturing));
+    toggle.setAttribute("aria-busy", String(pendingCaptionChange !== null));
     download.disabled = !log.entries.length;
     reset.disabled = !log.entries.length;
     hint.textContent = finished ? "Meeting ended. Your full log is available to download." :
-      !capturing ? "Capture is paused. Resume when you are ready." :
-      !regionFound ? "Waiting for Meet’s caption panel. Turn on captions." :
+      captions.enabled === null ? "Waiting for Meet’s caption controls. You can turn on captions in Meet." :
+      !capturing ? "Meet captions are off. Use Start or Meet’s caption button to resume." :
+      !regionFound ? "Meet captions are on. Waiting for the caption panel." :
         !log.entries.length ? "Caption panel found. Waiting for speech." :
           "Keeping captions as they appear, including older entries.";
     if (!automatic.checked) {
@@ -711,7 +736,12 @@ function startRoom(room) {
   }
 
   function scan() {
-    if (!capturing || roomFromPath(location.pathname) !== room) return;
+    if (roomFromPath(location.pathname) !== room) return;
+    const capturing = isCapturing();
+    if (capturing && !wasCapturing) {
+      schedule = new BackupSchedule(log.entries.length ? schedule.serialize() : undefined);
+    }
+    wasCapturing = capturing;
     const regions = captionRegions(document);
     regionFound = regions.length > 0;
     let changed = false;
@@ -721,11 +751,13 @@ function startRoom(room) {
         if (finalRow) changed = log.updateDetached(finalRow) || changed;
       }
     }
-    if (regionFound) {
+    if (capturing && regionFound) {
       const rows = captionRows(regions);
       changed = log.ingest(rows) || changed;
       knownRows = rows;
       if (log.entries.length) changed = schedule.start() || changed;
+    } else {
+      knownRows = [];
     }
     if (changed) queueRecovery();
     render();
@@ -756,29 +788,26 @@ function startRoom(room) {
     placement.refresh();
   });
   toggle.addEventListener("click", () => {
-    if (capturing) scan();
-    if (!capturing) {
-      schedule = new BackupSchedule(log.entries.length ? schedule.serialize() : undefined);
-      captionsRequested = false;
-    }
-    capturing = !capturing;
-    finished = false;
-    if (capturing) refresh();
+    const captions = readMeetCaptions(document);
+    if (finished || !captions.available || pendingCaptionChange) return;
+    scan();
+    captionsRequested = true;
+    pendingCaptionChange = { enabled: !captions.enabled, requestedAt: Date.now() };
+    if (!setMeetCaptions(document, pendingCaptionChange.enabled)) pendingCaptionChange = null;
+    refresh();
     writeRecovery();
   });
   download.addEventListener("click", () => saveDownload());
   for (const input of [format, ownName, automatic, autoFinish]) input.addEventListener("change", writeRecovery);
   reset.addEventListener("click", () => {
     if (!window.confirm("Start a new log? This removes the current log from this tab. Download it first if you need it.")) return;
-    capturing = false;
-    captionsRequested = false;
-    finished = false;
     recoveryNotice.hidden = true;
     knownRows = [];
     log = new Transcript(room);
     schedule = new BackupSchedule();
     latestBackup = 0;
     exportError = "";
+    scan();
     writeRecovery();
   });
 
@@ -791,19 +820,26 @@ function startRoom(room) {
   function refresh() {
     if (roomFromPath(location.pathname) !== room) return;
     const ended = meetingHasEnded(document);
-    if (!ended && capturing && !finished && !captionsRequested) captionsRequested = enableMeetCaptions(document);
-    scan();
     if (ended && !finished) {
       finishDownload();
       finished = true;
-      capturing = false;
-    } else if (!ended && finished && captionRegions(document).length) {
+      pendingCaptionChange = null;
+    } else if (!ended && finished && readMeetCaptions(document).enabled !== null) {
       finished = false;
-      capturing = true;
       captionsRequested = false;
-      schedule = new BackupSchedule(schedule.serialize());
-      scan();
     }
+    if (!ended && !finished && !captionsRequested) {
+      const captions = readMeetCaptions(document);
+      if (captions.enabled === true) captionsRequested = true;
+      else if (captions.available) {
+        captionsRequested = true;
+        pendingCaptionChange = { enabled: true, requestedAt: Date.now() };
+        if (!setMeetCaptions(document, true)) pendingCaptionChange = null;
+      }
+    }
+    if (pendingCaptionChange && (readMeetCaptions(document).enabled === pendingCaptionChange.enabled ||
+        Date.now() - pendingCaptionChange.requestedAt >= 3000)) pendingCaptionChange = null;
+    scan();
     render();
   }
 
@@ -822,11 +858,11 @@ function startRoom(room) {
     characterData: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ["aria-label", "aria-labelledby", "aria-hidden", "hidden", "aria-valuetext", "aria-selected", "aria-checked", "aria-expanded"],
+    attributeFilter: ["aria-label", "aria-labelledby", "aria-hidden", "hidden", "aria-valuetext", "aria-selected", "aria-checked", "aria-pressed", "aria-disabled", "disabled", "aria-expanded"],
   });
   const timer = setInterval(() => {
     refresh();
-    if (capturing && automatic.checked && log.entries.length && schedule.due(log.revision)) saveDownload();
+    if (isCapturing() && automatic.checked && log.entries.length && schedule.due(log.revision)) saveDownload();
     render();
   }, 1000);
   const leaving = () => { scan(); writeRecovery(); };
